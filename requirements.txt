@@ -1,3 +1,4 @@
 aiohttp>=3.9.5,<4.0.0
 PyYAML>=6.0.2,<7.0.0
 tomlkit>=0.13.3,<1.0.0
+flatpak-cargo-generator>=0.1.4,<1.0.0

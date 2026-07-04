@@ -12,7 +12,7 @@ use tokio::{
     time::sleep,
 };
 
-use crate::languatool::{
+use crate::languagetool::{
     client::LanguageToolClient,
     service::{Message, Suggestion},
 };
@@ -23,7 +23,7 @@ pub struct AsyncMessagingHelperRust {
     pub suggestion_sender: Sender<Suggestion>,
     pub suggestion_receiver: Receiver<Suggestion>,
 
-    pub langserver_handle: Option<Child>,
+    pub languagetool_handle: Option<Child>,
 
     pub handle: Option<JoinHandle<()>>,
 }
@@ -38,7 +38,7 @@ impl Default for AsyncMessagingHelperRust {
             message_receiver,
             suggestion_sender,
             suggestion_receiver,
-            langserver_handle: None,
+            languagetool_handle: None,
             handle: None,
         }
     }
@@ -50,8 +50,8 @@ impl Drop for AsyncMessagingHelperRust {
             log::info!("aborting messaging thread");
             handle.abort();
         }
-        if let Some(mut child) = self.langserver_handle.take() {
-            log::info!("Killing langserver");
+        if let Some(mut child) = self.languagetool_handle.take() {
+            log::info!("Killing LanguageTool");
             child.kill().unwrap();
         }
     }
@@ -92,9 +92,9 @@ impl AsyncMessagingHelperRust {
         }));
     }
 
-    pub fn restart_lang_server(&mut self, embeded: bool, port: &str) {
-        if let Some(mut child) = self.langserver_handle.take() {
-            log::trace!("aborting Langtool server");
+    pub fn restart(&mut self, embedded: bool, port: &str) {
+        if let Some(mut child) = self.languagetool_handle.take() {
+            log::trace!("aborting LanguageTool");
             child.kill().unwrap();
         }
 
@@ -107,12 +107,16 @@ impl AsyncMessagingHelperRust {
         self.start_async_worker(port);
 
         let port = port.to_string();
-        if embeded {
-            log::trace!("Startting Langtool server at: {port}");
+        if embedded {
+            log::trace!("Starting LanguageTool at: {port}");
             self.setup_child(port);
         }
     }
 
+    /// Search for the path to LanguageTool in 3 places. 
+    /// - First next to the executable for release artifacts
+    /// - Second inside the ${CWS}/build folder for local dev
+    /// - Third in the CWD for general use
     fn language_tool_dir() -> PathBuf {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(exe_dir) = exe.parent() {
@@ -124,10 +128,16 @@ impl AsyncMessagingHelperRust {
                 }
             }
         }
+        let build_path = PathBuf::from("./build/LanguageTool");
+        if build_path.is_dir() {
+            return build_path;
+        }
         PathBuf::from("./LanguageTool")
     }
 
     fn setup_child(&mut self, port: String) {
+        log::info!("LanguageTool dir: {:?}", Self::language_tool_dir());
+
         let mut child = Command::new("java")
             .args([
                 "-cp",
@@ -145,7 +155,7 @@ impl AsyncMessagingHelperRust {
             .spawn()
             .unwrap();
 
-        // everything under here is probably over engineered
+        // everything under here is probably over-engineered
 
         // create a task that will read the stdout of the child and print it using the logger
         let out = child.stdout.take().unwrap();
@@ -154,7 +164,7 @@ impl AsyncMessagingHelperRust {
 
             for line in reader.lines() {
                 match line {
-                    Ok(line) => log::trace!("[LANGTOOL]: {line}"),
+                    Ok(line) => log::trace!("[LanguageTool]: {line}"),
                     Err(e) => {
                         log::error!("Error from stdout reader: {e:?}");
                         break;
@@ -164,23 +174,23 @@ impl AsyncMessagingHelperRust {
             log::info!("Exiting stdout reader");
         });
 
-        // create a task that will read the stderror of the child and print it using the logger
+        // create a task that will read the stderr of the child and print it using the logger
         let error = child.stderr.take().unwrap();
         tokio::spawn(async move {
             let reader = BufReader::new(error);
 
             for line in reader.lines() {
                 match line {
-                    Ok(line) => log::trace!("[LANGTOOL]: {line}"),
+                    Ok(line) => log::trace!("[LanguageTool]: {line}"),
                     Err(e) => {
-                        log::error!("Error from stderror reader: {e:?}");
+                        log::error!("Error from stderr reader: {e:?}");
                         break;
                     }
                 }
             }
-            log::info!("Exiting stderror reader");
+            log::info!("Exiting stderr reader");
         });
 
-        self.langserver_handle = Some(child);
+        self.languagetool_handle = Some(child);
     }
 }

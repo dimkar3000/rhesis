@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
 import org.kde.kirigami as Kirigami
-import org.dimkar.rhesis
+import io.github.dimkar3000.rhesis
 
 Kirigami.Page {
     id: mainPage

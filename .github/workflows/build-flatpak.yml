@@ -8,47 +8,44 @@ on:
 
 jobs:
   build-flatpak:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.10
+      options: --privileged
+
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Generate cargo-sources.json
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            flatpak \
-            flatpak-builder \
-            openjdk-17-jre-headless \
-            python3 \
-            python3-venv \
-            python3-pip \
-            curl \
-            git \
-            make \
-            g++ \
-            unzip \
-            cmake
+          mkdir -p build
+          flatpak-cargo-generator Cargo.lock -o build/cargo-sources.json
 
       - name: Add flathub remote
-        run: flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-      - name: Cache flatpak runtimes
-        id: cache-flatpak
-        uses: actions/cache@v4
+      - name: Build Flatpak
+        run: |
+          flatpak-builder \
+            --disable-rofiles-fuse \
+            --force-clean \
+            --repo=build/repo \
+            build/flatpak-build-dir \
+            io.github.dimkar3000.rhesis.json
+
+      - name: Build bundle
+        run: flatpak build-bundle build/repo build/rhesis.flatpak io.github.dimkar3000.rhesis
+
+      - name: Generate release body from metainfo
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/release-body.py io.github.dimkar3000.rhesis.metainfo.xml > build/release_body.md
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          path: ~/.local/share/flatpak
-          key: flatpak-${{ runner.os }}-${{ hashFiles('org.dimkar.rhesis.json') }}
-
-      - name: Run setup script
-        run: bash setup.sh
-
-      - name: Build flatpak
-        run: bash build-flatpak.sh
-
-      - name: Upload flatpak artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rhesis-flatpak
-          path: rhesis.flatpak
-          if-no-files-found: error
+          files: build/rhesis.flatpak
+          body_path: build/release_body.md

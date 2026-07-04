@@ -1,6 +1,6 @@
 use crate::{
     interop::bridge::ffi::{Range, Recommendation},
-    languatool::models::LanguageToolDto,
+    languagetool::models::LanguageToolDto,
 };
 
 #[derive(Default)]

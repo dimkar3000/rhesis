@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.dimkar3000.rhesis</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Rhesis</name>
+  <summary>Write with confidence — your personal grammar and style assistant</summary>
+  <developer id="io.github.dimkar">
+    <name>dimkar</name>
+  </developer>
+  <description>
+    <p>
+      Rhesis is a desktop writing assistant that helps you write clearly
+      and confidently. Whether you are composing an email, drafting a
+      report, or writing a blog post, Rhesis catches grammar mistakes,
+      suggests better word choices, and improves your style — all without
+      sending your text anywhere.
+    </p>
+    <p>
+      Unlike cloud-based tools, everything runs on your own machine.
+      Your words stay private, there is no internet dependency, and there
+      are no usage limits or subscriptions.
+    </p>
+    <ul>
+      <li>Catches grammar errors, typos, and awkward phrasing</li>
+      <li>Suggests style improvements to make your writing clearer</li>
+      <li>Supports 25+ languages — switch between them seamlessly</li>
+      <li>Automatically detects which language you are writing in</li>
+      <li>Works entirely offline — your text never leaves your computer</li>
+      <li>Fits naturally into your KDE desktop</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.dimkar3000.rhesis.desktop</launchable>
+  <url type="homepage">https://github.com/dimkar/rhesis</url>
+  <url type="bugtracker">https://github.com/dimkar/rhesis/issues</url>
+  <url type="vcs-browser">https://github.com/dimkar/rhesis</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/dimkar/rhesis/main/screenshots/main.png</image>
+      <caption>Main window with grammar checking</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-07-03">
+      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.1.0</url>
+      <description>
+        <p>First public release of Rhesis</p>
+        <ul>
+          <li>Grammar, style, and spell checking for over 25 languages</li>
+          <li>Automatic language detection, just start typing</li>
+          <li>100 % offline, your writing stays private</li>
+          <li>Native KDE desktop experience</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+  <custom>
+    <value key="flathub::manifest">https://raw.githubusercontent.com/dimkar/rhesis/main/io.github.dimkar3000.rhesis.json</value>
+  </custom>
+</component>

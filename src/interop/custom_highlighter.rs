@@ -56,7 +56,7 @@ impl CustomHighlighterRust {
                     highlighter.as_mut().rehighlight();
                 }) {
                     Ok(_) => (),
-                    Err(e) => error!("Error while queing work to ui thread: {e:?}"),
+                    Err(e) => error!("Error while queuing work to ui thread: {e:?}"),
                 };
             }
         }));

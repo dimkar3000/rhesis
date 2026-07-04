@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.dimkar.rhesis
+import io.github.dimkar3000.rhesis
 
 Kirigami.Page {
     id: secondPage
@@ -40,7 +40,7 @@ Kirigami.Page {
             enabled: hasChanges && ((localEmbedded && localPortValid) || !localEmbedded)
             onTriggered: {
                 if(hasChanges) {
-                    helper.restart_lang_server(localEmbedded, localPort)
+                    helper.restart(localEmbedded, localPort)
                 }
 
                 settings.embedded = localEmbedded
@@ -70,7 +70,7 @@ Kirigami.Page {
 
             Kirigami.Separator {
                     Kirigami.FormData.isSection: true
-                    Kirigami.FormData.label: "Embeded LangTool Server Settings"
+                    Kirigami.FormData.label: "Embedded LanguageTool Settings"
             }
 
             Controls.Switch {
@@ -87,7 +87,7 @@ Kirigami.Page {
                     id: portField
                     Layout.fillWidth: true
                     enabled: localEmbedded
-                    placeholderText: "(2699)"
+                    placeholderText: "(2689)"
                     text: localPort
                     onTextChanged: localPort = text
 
@@ -106,7 +106,7 @@ Kirigami.Page {
                     }
                     
                     Controls.ToolTip {
-                        text: "Avaialable options: [1-65534]"
+                        text: "Available options: [1-65534]"
                         visible: parent.hovered
                     }
                 }

@@ -1,0 +1,115 @@
+{
+	"id": "io.github.dimkar3000.rhesis",
+	"runtime": "org.kde.Platform",
+	"runtime-version": "6.10",
+	"sdk": "org.kde.Sdk",
+	"command": "rhesis",
+	"desktop-file-name-suffix": "",
+	"sdk-extensions": [
+		"org.freedesktop.Sdk.Extension.rust-stable",
+		"org.freedesktop.Sdk.Extension.openjdk17"
+	],
+	"build-options": {
+		"append-path": "/usr/lib/sdk/rust-stable/bin"
+	},
+	"finish-args": [
+		"--share=ipc",
+		"--share=network",
+		"--device=dri",
+		"--socket=fallback-x11",
+		"--socket=wayland"
+	],
+	"modules": [
+		{
+			"name": "mold",
+			"buildsystem": "simple",
+			"build-commands": [
+				"install -Dm755 bin/mold /app/bin/mold",
+				"install -Dm755 bin/ld.mold /app/bin/ld.mold"
+			],
+			"sources": [
+				{
+					"type": "archive",
+					"url": "https://github.com/rui314/mold/releases/download/v2.41.0/mold-2.41.0-x86_64-linux.tar.gz",
+					"sha256": "a3696680d99e692970590a178bc3a33d78d60d1c6dc9db7a11b557b02b751f5d"
+				}
+			]
+		},
+		{
+			"name": "corrosion",
+			"buildsystem": "cmake",
+			"sources": [
+				{
+					"type": "git",
+					"url": "https://github.com/corrosion-rs/corrosion.git",
+					"tag": "v0.6.1",
+					"commit": "1499b14e4906a2890f5cee1547c8848db261753d"
+				}
+			]
+		},
+		{
+			"name": "openjdk",
+			"buildsystem": "simple",
+			"build-commands": [
+				"/usr/lib/sdk/openjdk17/installjdk.sh"
+			]
+		},
+		{
+			"name": "rhesis",
+			"buildsystem": "simple",
+			"build-options": {
+				"env": {
+					"CARGO_HOME": "/run/build/rhesis/cargo"
+				}
+			},
+			"build-commands": [
+				"cmake -DCMAKE_INSTALL_PREFIX=/app .",
+				"make -j$(nproc) install",
+				"install -Dm644 io.github.dimkar3000.rhesis.png /app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png",
+				"install -Dm644 io.github.dimkar3000.rhesis.metainfo.xml /app/share/metainfo/io.github.dimkar3000.rhesis.metainfo.xml",
+				"install -Dm644 License.md /app/share/licenses/io.github.dimkar3000.rhesis/License.md",
+				"cp -r languagetool /app/LanguageTool",
+				"rm -f /app/LanguageTool/languagetool.jar",
+				"rm -f /app/LanguageTool/languagetool-commandline.jar",
+				"rm -f /app/LanguageTool/libs/languagetool-core-tests.jar",
+				"rm -f /app/LanguageTool/libs/junit.jar /app/LanguageTool/libs/hamcrest-core.jar",
+				"rm -rf /app/LanguageTool/META-INF/maven",
+				"rm -f /app/LanguageTool/CHANGES.md /app/LanguageTool/CHANGES.txt /app/LanguageTool/README.md",
+				"printf 'fasttextModel=../lid.176.ftz\\nfasttextBinary=../fastText/fasttext\\n' > /app/LanguageTool/server.properties",
+				"make -C fasttext-src -j$(nproc) CXXFLAGS=\"-pthread -std=c++17 -march=native -include cstdint\"",
+				"install -Dm755 fasttext-src/fasttext /app/fastText/fasttext",
+				"cp lid-model/lid.176.ftz /app/",
+				"bash scripts/create-jre.sh",
+				"ln -s /app/jre/bin/java /app/bin/java"
+			],
+			"sources": [
+				"build/cargo-sources.json",
+				{
+					"type": "dir",
+					"path": "."
+				},
+				{
+					"type": "archive",
+					"url": "https://languagetool.org/download/LanguageTool-6.6.zip",
+					"sha256": "53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631",
+					"dest": "languagetool",
+					"strip-components": 1
+				},
+				{
+					"type": "git",
+					"url": "https://github.com/facebookresearch/fastText.git",
+					"dest": "fasttext-src",
+					"tag": "v0.9.2",
+					"commit": "5b5943c118b0ec5fb9cd8d20587de2b2d3966dfe"
+				},
+				{
+					"type": "file",
+					"url": "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz",
+					"sha256": "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83",
+					"dest": "lid-model",
+					"dest-filename": "lid.176.ftz"
+				}
+			]
+		}
+	]
+}

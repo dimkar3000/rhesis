@@ -8,10 +8,10 @@ use std::env;
 use crate::interop::bridge;
 
 mod interop;
-mod languatool;
+mod languagetool;
 
 lazy_static! {
-    static ref NAMESPACE: QString = QString::from("org.dimkar.rhesis");
+    static ref NAMESPACE: QString = QString::from("io.github.dimkar3000.rhesis");
     static ref ROOT_QML_FILE_PATH: QUrl = QUrl::from(&format!(
         "qrc:/qt/qml/{}/src/interop/qml/Root.qml",
         NAMESPACE.to_string().replace(".", "/")
@@ -21,7 +21,7 @@ lazy_static! {
 
 #[tokio::main()]
 async fn main() {
-    log::info!("Starting Language Server");
+    log::info!("Starting LanguageTool");
 
     run_ui();
 }

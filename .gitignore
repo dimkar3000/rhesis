@@ -2,13 +2,6 @@ build
 .idea
 .flatpak-builder
 /target
-venv
-flatpak-build-dir
+.cargo
+CMakeFiles
 cargo-sources.json
-flatpak-cargo-generator.py
-lid.176.bin
-LanguageTool
-LanguageTool-*
-fastText
-rhesis-master
-rhesis.flatpak

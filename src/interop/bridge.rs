@@ -79,9 +79,9 @@ pub mod ffi {
         type AsyncMessagingHelper = super::AsyncMessagingHelperRust;
 
         #[qinvokable]
-        fn restart_lang_server(
+        fn restart(
             self: Pin<&mut AsyncMessagingHelper>,
-            embeded: bool,
+            embedded: bool,
             address: &QString,
         );
 
@@ -164,12 +164,12 @@ use cxx_qt_lib::QString;
 use std::pin::Pin;
 
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32};
-use crate::languatool::service::Message;
+use crate::languagetool::service::Message;
 
 impl ffi::AsyncMessagingHelper {
-    fn restart_lang_server(self: Pin<&mut Self>, embeded: bool, address: &QString) {
+    fn restart(self: Pin<&mut Self>, embedded: bool, address: &QString) {
         self.rust_mut()
-            .restart_lang_server(embeded, &address.to_string());
+            .restart(embedded, &address.to_string());
     }
 
     fn text_area_changed(self: Pin<&mut Self>, text: QString) {

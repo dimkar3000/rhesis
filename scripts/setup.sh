@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+BUILD_DIR="$PROJECT_DIR/build"
+
 cd "$SCRIPT_DIR"
 
 RED='\033[0;31m'
@@ -14,20 +17,20 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
 LANGUAGETOOL_VERSION="${LANGUAGETOOL_VERSION:-Latest}"
-# This url need to much the a download link from here: https://internal1.languagetool.org/snapshots/
+# This url needs to match the download link from here: https://internal1.languagetool.org/snapshots/
 LANGUAGETOOL_URL="${LANGUAGETOOL_URL:-https://internal1.languagetool.org/snapshots/LanguageTool-latest-snapshot.zip}"
-LANGUAGETOOL_DIR="LanguageTool"
+LANGUAGETOOL_DIR="$BUILD_DIR/LanguageTool"
 
 FASTTEXT_REPO="${FASTTEXT_REPO:-https://github.com/facebookresearch/fastText.git}"
-FASTTEXT_DIR="fastText"
+FASTTEXT_DIR="$BUILD_DIR/fastText"
 
-LID_MODEL_URL="${LID_MODEL_URL:-https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin}"
-LID_MODEL_FILE="lid.176.bin"
+LID_MODEL_URL="${LID_MODEL_URL:-https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz}"
+LID_MODEL_FILE="$BUILD_DIR/lid.176.ftz"
 
 check_prerequisites() {
     local missing=()
 
-    if ! command -v java &>/dev/null; then
+    if [ "${CI:-}" != "true" ] && ! command -v java &>/dev/null; then
         missing+=("java (openjdk 17+)")
     fi
 
@@ -88,11 +91,11 @@ download_languagetool() {
         exit 1
     fi
 
-    mv "${extracted_dir[0]}" "$SCRIPT_DIR/$LANGUAGETOOL_DIR"
+    mv "${extracted_dir[0]}" "$LANGUAGETOOL_DIR"
     rm -rf "$tmpdir"
 
     cat > "$LANGUAGETOOL_DIR/server.properties" <<-EOF
-fasttextModel=../lid.176.bin
+fasttextModel=../lid.176.ftz
 fasttextBinary=../fastText/fasttext
 EOF
 
@@ -116,15 +119,15 @@ setup_fasttext() {
 
 download_lid_model() {
     if [ -f "$LID_MODEL_FILE" ]; then
-        info "lid.176.bin already exists, skipping download."
+        info "lid.176.ftz already exists, skipping download."
         return
     fi
 
-    info "Downloading language identification model (lid.176.bin)..."
+    info "Downloading language identification model (lid.176.ftz)..."
     
     curl -fsSLo "$LID_MODEL_FILE" "$LID_MODEL_URL"
 
-    info "lid.176.bin downloaded (size: $(du -h "$LID_MODEL_FILE" | cut -f1))."
+    info "lid.176.ftz downloaded (size: $(du -h "$LID_MODEL_FILE" | cut -f1))."
 }
 
 main() {
@@ -133,19 +136,20 @@ main() {
     echo "========================================"
     echo ""
 
+    mkdir -p "$BUILD_DIR"
     check_prerequisites
     download_languagetool
     setup_fasttext
     download_lid_model
-
+    
     echo ""
     info "Setup complete!"
     echo ""
-    echo "  LanguageTool: $SCRIPT_DIR/$LANGUAGETOOL_DIR"
-    echo "  fastText:     $SCRIPT_DIR/$FASTTEXT_DIR"
-    echo "  lid model:    $SCRIPT_DIR/$LID_MODEL_FILE"
+    echo "  LanguageTool: $BUILD_DIR/LanguageTool"
+    echo "  fastText:     $BUILD_DIR/fastText"
+    echo "  lid model:    $BUILD_DIR/lid.176.ftz"
     echo ""
-    echo "You can now run 'cargo build' or 'build-flatpak.sh' to build the application."
+    echo "You can now run 'cargo build' or 'scripts/build-flatpak.sh' to build the application."
 }
 
 main "$@"

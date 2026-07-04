@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Rhesis
+Comment=Grammar and style checking assistant powered by LanguageTool
+Exec=rhesis
+Icon=io.github.dimkar3000.rhesis
+Type=Application
+Terminal=false
+Categories=Office;TextTools;
+Keywords=grammar;spelling;style;writing;language;proofreading;
+

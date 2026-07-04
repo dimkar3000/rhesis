@@ -1,7 +1,7 @@
 use cxx_qt_build::{CppFile, CxxQtBuilder, QmlModule};
 
 fn main() {
-    let module = QmlModule::new("org.dimkar.rhesis");
+    let module = QmlModule::new("io.github.dimkar3000.rhesis");
 
     let paths = glob::glob("src/interop/qml/**/*.qml").unwrap();
 

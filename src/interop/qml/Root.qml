@@ -3,7 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
 import org.kde.kirigami as Kirigami
-import org.dimkar.rhesis
+import io.github.dimkar3000.rhesis
 import org.kde.kirigamiaddons.formcard as FormCard
 
 Kirigami.ApplicationWindow {
@@ -15,6 +15,8 @@ Kirigami.ApplicationWindow {
     maximumHeight: 720
 
     title: "Hello Linux"
+
+    onClosing: Qt.quit()
 
     property alias settingsPage: settingsPage
 
@@ -44,7 +46,7 @@ Kirigami.ApplicationWindow {
     AsyncMessagingHelper {
         id: messagingHelper
         Component.onCompleted: { 
-            messagingHelper.restart_lang_server(appSettings.embedded, appSettings.port)
+            messagingHelper.restart(appSettings.embedded, appSettings.port)
         }
     }
 
