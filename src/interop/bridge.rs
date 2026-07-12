@@ -1,19 +1,6 @@
 #[cxx_qt::bridge]
 pub mod ffi {
 
-    #[derive(Default, Debug, Clone, PartialEq)]
-    pub struct Recommendation {
-        range: Range,
-        value: String,
-        color: String,
-    }
-
-    #[derive(Default, Debug, Clone, PartialEq, Copy)]
-    pub struct Range {
-        start: i32,
-        length: i32,
-    }
-
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
@@ -23,6 +10,16 @@ pub mod ffi {
 
         include!("cxx-qt-lib/qlist.h");
         type QList_i32 = cxx_qt_lib::QList<i32>;
+
+        include!("cxx-qt-lib/qvariant.h");
+        type QVariant = cxx_qt_lib::QVariant;
+
+        include!("cxx-qt-lib/core/qmap/qmap_QString_QVariant.h");
+        type QMap_QString_QVariant = cxx_qt_lib::QMap<cxx_qt_lib::QMapPair_QString_QVariant>;
+
+        include!("cxx-qt-lib/qlist.h");
+        type QList_QVariant = cxx_qt_lib::QList<QVariant>;
+
         type QGuiApplication = cxx_qt_lib::QGuiApplication;
 
         include!("cxx-qt-lib-extras/gui/qapplication.h");
@@ -61,6 +58,8 @@ pub mod ffi {
         fn appSetWindowIcon(app: Pin<&mut QApplication>, path: &QString);
 
         fn setupIconTheme();
+
+        fn installTranslation(app: Pin<&mut QApplication>, translationsDir: &QString) -> bool;
     }
 
     unsafe extern "C++" {
@@ -79,14 +78,13 @@ pub mod ffi {
         type AsyncMessagingHelper = super::AsyncMessagingHelperRust;
 
         #[qinvokable]
-        fn restart(
-            self: Pin<&mut AsyncMessagingHelper>,
-            embedded: bool,
-            address: &QString,
-        );
+        fn restart(self: Pin<&mut AsyncMessagingHelper>, embedded: bool, address: &QString);
 
         #[qinvokable]
         fn text_area_changed(self: Pin<&mut AsyncMessagingHelper>, text: QString);
+
+        #[qinvokable]
+        fn update_colors(self: Pin<&mut AsyncMessagingHelper>, colors: QMap_QString_QVariant);
 
     }
 
@@ -105,7 +103,7 @@ pub mod ffi {
             self: Pin<&mut CustomHighlighter>,
             start: i32,
             length: i32,
-        ) -> QList_QString;
+        ) -> QList_QVariant;
 
         #[qinvokable]
         #[cxx_name = "findRecommendation"]
@@ -160,20 +158,29 @@ pub mod ffi {
 }
 
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QString, QVariant};
 use std::pin::Pin;
 
-use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32};
+use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
 use crate::languagetool::service::Message;
 
 impl ffi::AsyncMessagingHelper {
     fn restart(self: Pin<&mut Self>, embedded: bool, address: &QString) {
-        self.rust_mut()
-            .restart(embedded, &address.to_string());
+        self.rust_mut().restart(embedded, &address.to_string());
     }
 
     fn text_area_changed(self: Pin<&mut Self>, text: QString) {
-        let _ = self.message_sender.send(Message(text));
+        let _ = self.message_sender.send(Message::Suggestion(text));
+    }
+
+    fn update_colors(self: Pin<&mut Self>, colors: QMap_QString_QVariant) {
+        let mut pairs = Vec::new();
+        for (k, v) in colors.iter() {
+            if let Some(s) = v.value::<QString>() {
+                pairs.push((k.clone(), s));
+            }
+        }
+        let _ = self.message_sender.send(Message::UpdateColors(pairs));
     }
 }
 
@@ -187,13 +194,13 @@ impl ffi::CustomHighlighter {
         }
     }
 
-    pub fn get_suggestions(self: Pin<&mut Self>, start: i32, length: i32) -> ffi::QList_QString {
+    pub fn get_suggestions(self: Pin<&mut Self>, start: i32, length: i32) -> ffi::QList_QVariant {
         self.recommendations
             .iter()
             .filter(|r| r.range.start >= start && r.range.length <= length)
             .take(5)
-            .map(|x| QString::from(&x.value))
-            .collect::<ffi::QList_QString>()
+            .map(QVariant::from)
+            .collect()
     }
 
     pub fn replace_word(mut self: Pin<&mut Self>, start: i64, end: i64, replacement: &QString) {

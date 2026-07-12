@@ -1,9 +1,8 @@
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
-use log::error;
 use tokio::task::JoinHandle;
 
-use crate::interop::bridge::ffi::Recommendation;
+use crate::interop::recommendation::Recommendation;
 
 #[derive(Default)]
 pub struct CustomHighlighterRust {
@@ -25,7 +24,7 @@ impl CustomHighlighterRust {
         self.recommendations
             .iter()
             .map(|r| {
-                let color = QString::from(r.color.clone());
+                let color = r.color.clone();
                 let start = r.range.start;
                 let length = r.range.length;
                 (start, length, color)
@@ -44,7 +43,7 @@ impl CustomHighlighterRust {
             loop {
                 match receiver.changed().await {
                     Ok(_) => (),
-                    Err(e) => error!("Error while waiting on the receiver: {e:?}"),
+                    Err(e) => log::error!("Error while waiting on the receiver: {e:?}"),
                 };
 
                 // Clone the receiver to move inside the thread
@@ -56,7 +55,7 @@ impl CustomHighlighterRust {
                     highlighter.as_mut().rehighlight();
                 }) {
                     Ok(_) => (),
-                    Err(e) => error!("Error while queuing work to ui thread: {e:?}"),
+                    Err(e) => log::error!("Error while queuing work to ui thread: {e:?}"),
                 };
             }
         }));

@@ -39,6 +39,13 @@ fn run_ui() {
 
     bridge::ffi::setupIconTheme();
 
+    // Install translations
+    let src_path = env!("CARGO_MANIFEST_DIR");
+    let translations_dir = format!("{}/translations", src_path);
+    if let Some(mut app) = app.as_mut() {
+        bridge::ffi::installTranslation(app.as_mut(), &QString::from(&translations_dir));
+    }
+
     let mut engine = QQmlApplicationEngine::new();
 
     // To associate the executable to the installed desktop file

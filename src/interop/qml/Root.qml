@@ -14,7 +14,7 @@ Kirigami.ApplicationWindow {
     maximumWidth: 1280
     maximumHeight: 720
 
-    title: "Hello Linux"
+    title: qsTr("app_title")
 
     onClosing: Qt.quit()
 
@@ -25,6 +25,13 @@ Kirigami.ApplicationWindow {
         property bool embedded: true
         property string port: "2689"
         property string defaultPort: "2689"
+        property bool showTooltips: true
+        property bool showDebugTooltips: true
+        property var colorSettings: ({
+                "CATEGORY:GRAMMAR": "#ecc224",
+                "CATEGORY:TYPOGRAPHY": "#f63ef9",
+                "CATEGORY:TYPOS": "#1ae918"
+            })
     }
 
     pageStack.globalToolBar.showNavigationButtons: Kirigami.ApplicationHeaderStyle.NoNavigationButtons
@@ -40,13 +47,16 @@ Kirigami.ApplicationWindow {
 
     CustomHighlighter {
         id: highlighter
-        Component.onCompleted: highlighter.startMessageThread(messagingHelper)
+        Component.onCompleted: {
+            highlighter.startMessageThread(messagingHelper);
+        }
     }
 
     AsyncMessagingHelper {
         id: messagingHelper
-        Component.onCompleted: { 
-            messagingHelper.restart(appSettings.embedded, appSettings.port)
+        Component.onCompleted: {
+            messagingHelper.restart(appSettings.embedded, appSettings.port);
+            messagingHelper.update_colors(appSettings.colorSettings);
         }
     }
 
@@ -54,5 +64,6 @@ Kirigami.ApplicationWindow {
         id: mainPage
         highlighter: highlighter
         helper: messagingHelper
+        settings: appSettings
     }
 }

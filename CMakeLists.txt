@@ -17,6 +17,7 @@ include(ECMUninstallTarget)
 include(ECMFindQmlModule)
 find_package(Qt6 REQUIRED COMPONENTS Gui)
 find_package(Qt6 COMPONENTS QmlTools QUIET)
+find_package(Qt6 COMPONENTS LinguistTools QUIET)
 
 # --- Build the Rust binary ---
 add_custom_target(rhesis_build ALL
@@ -31,6 +32,29 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/debug/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
 else()
     set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/release/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+# --- Translations ---
+set(RHESIS_TRANSLATION_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/Root.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/MainPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/SettingsPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/components/RuleListItem.qml
+)
+
+file(GLOB RHESIS_TRANSLATION_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/translations/*.ts
+)
+
+if(Qt6LinguistTools_FOUND)
+    qt6_add_translation(RHESIS_QM_FILES ${RHESIS_TRANSLATION_FILES})
+    add_custom_target(translations ALL DEPENDS ${RHESIS_QM_FILES})
+
+    install(
+        FILES ${RHESIS_QM_FILES}
+        DESTINATION ${KDE_INSTALL_BINDIR}/translations
+        COMPONENT Runtime
+    )
 endif()
 
 # --- Install rules ---

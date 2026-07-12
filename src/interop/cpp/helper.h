@@ -7,6 +7,11 @@
 #include <QPalette>
 #include <QIcon>
 #include <QSettings>
+#include <QTranslator>
+#include <QFile>
+#include <QVariant>
+#include <QVariantMap>
+#include <QVariantList>
 #include <memory>
 
 inline std::unique_ptr<QTextCharFormat> newQTextCharFormat() noexcept {
@@ -37,4 +42,25 @@ inline void setupIconTheme() {
     QStringList paths = QIcon::themeSearchPaths();
     paths.prepend(":/icons");
     QIcon::setThemeSearchPaths(paths);
+}
+
+inline bool installTranslation(QApplication& app, const QString& translationsDir) {
+    printf("translationDir:: %s\n", translationsDir.toStdString().c_str());
+    
+    
+    // 1. Create a translator object
+    auto* translator = new QTranslator();
+
+    // 2. Determine the system locale and attempt to load the correct .qm file
+    // "myapp" is the base name of your .qm files (e.g., myapp_fr.qm)
+    // The second overload handles the list of preferred languages correctly.
+    const QString translationFile = QLocale::system().name();
+    printf("translationFile: %s\n", translationFile.toStdString().c_str());
+    printf("translationFile: %s\n", (translationsDir + "/rhesis_" + translationFile).toStdString().c_str());
+    if (translator->load(translationsDir + "/rhesis_" + translationFile)) {
+        app.installTranslator(translator); // 3. Install the translator
+        return true;
+    }
+
+    return false;
 }

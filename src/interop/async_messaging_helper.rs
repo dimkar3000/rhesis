@@ -30,7 +30,8 @@ pub struct AsyncMessagingHelperRust {
 
 impl Default for AsyncMessagingHelperRust {
     fn default() -> Self {
-        let (message_sender, message_receiver) = channel::<Message>(Message::default());
+        let (message_sender, message_receiver) =
+            channel::<Message>(Message::Suggestion(QString::default()));
         let (suggestion_sender, suggestion_receiver) = channel::<Suggestion>(Suggestion::default());
 
         Self {
@@ -62,7 +63,7 @@ impl AsyncMessagingHelperRust {
         let mut message_receiver = self.message_receiver.clone();
         let suggestion_sender = self.suggestion_sender.clone();
 
-        let client = LanguageToolClient::new_local(port);
+        let mut client = LanguageToolClient::new_local(port);
 
         self.handle = Some(tokio::spawn(async move {
             let mut last_text = QString::default();
@@ -78,7 +79,18 @@ impl AsyncMessagingHelperRust {
                     }
                 }
                 let message = message_receiver.borrow().clone();
-                let Message(text) = message;
+                let text = match message {
+                    Message::Suggestion(x) => x,
+                    Message::UpdateColors(x) => {
+                        client.set_colors(x);
+                        if !last_text.trimmed().is_empty() {
+                            let suggestions =
+                                client.get_recommendation(last_text.to_string()).await;
+                            let _ = suggestion_sender.send(Suggestion(suggestions));
+                        }
+                        continue;
+                    }
+                };
 
                 if text == last_text || text.trimmed().is_empty() {
                     continue;
@@ -113,7 +125,7 @@ impl AsyncMessagingHelperRust {
         }
     }
 
-    /// Search for the path to LanguageTool in 3 places. 
+    /// Search for the path to LanguageTool in 3 places.
     /// - First next to the executable for release artifacts
     /// - Second inside the ${CWS}/build folder for local dev
     /// - Third in the CWD for general use
