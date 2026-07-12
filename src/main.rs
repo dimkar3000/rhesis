@@ -39,9 +39,12 @@ fn run_ui() {
 
     bridge::ffi::setupIconTheme();
 
-    // Install translations
-    let src_path = env!("CARGO_MANIFEST_DIR");
-    let translations_dir = format!("{}/translations", src_path);
+    let translations_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.join("translations")))
+        .filter(|p| p.is_dir())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("{}/translations", env!("CARGO_MANIFEST_DIR")));
     if let Some(mut app) = app.as_mut() {
         bridge::ffi::installTranslation(app.as_mut(), &QString::from(&translations_dir));
     }

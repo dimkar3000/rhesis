@@ -43,7 +43,7 @@
     </message>
     <message id="embedded_lt_settings_section">
         <source>embedded_lt_settings_section</source>
-        <translation>Ρυθμίσεις ενσωματομένου LanguageTool Server</translation>
+        <translation>Ενσωματομένο LanguageTool Server</translation>
     </message>
     <message id="enable_embed_label">
         <source>enable_embed_label</source>
@@ -63,7 +63,7 @@
     </message>
     <message id="tooltip_settings_section">
         <source>tooltip_settings_section</source>
-        <translation>Ρυθμίσεις για Tooltip</translation>
+        <translation>Ρυθμίσεις για Tooltips</translation>
     </message>
     <message id="enable_tooltip_label">
         <source>enable_tooltip_label</source>
