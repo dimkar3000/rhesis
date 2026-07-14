@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0]
+- small fixes
+- implemented custom colors for suggestion + started on translations
+
 ## [0.1.0]
 - add config
 - pipeline test

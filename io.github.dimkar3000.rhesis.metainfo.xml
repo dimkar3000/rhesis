@@ -41,6 +41,16 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.0" date="2026-07-14">
+      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.2.0</url>
+      <description>
+        <p>Version 0.2.0</p>
+        <ul>
+          <li>small fixes</li>
+          <li>implemented custom colors for suggestion + started on translations</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-07-03">
       <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.1.0</url>
       <description>
