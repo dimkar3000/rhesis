@@ -11,6 +11,22 @@ CARGO_SOURCES="$BUILD_DIR/cargo-sources.json"
 FLATPAK_OUTPUT="$BUILD_DIR/flatpak-build-dir"
 FLATPAK_STATE="$BUILD_DIR/flatpak-state"
 
+# --- Parse arguments ---
+SKIP_BUILD=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --skip-build)
+            SKIP_BUILD=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
 cd "$SCRIPT_DIR"
 
 mkdir -p "$BUILD_DIR"
@@ -45,15 +61,18 @@ fi
 echo "Generating cargo-sources.json..."
 python "$GENERATOR_SCRIPT" "$PROJECT_DIR/Cargo.lock" -o "$CARGO_SOURCES"
 
-
 # --- Build flatpak ---
-echo "Building flatpak..."
-flatpak-builder \
-    --user \
-    --force-clean \
-    --state-dir "$FLATPAK_STATE" \
-    "$FLATPAK_OUTPUT" \
-    "$PROJECT_DIR/io.github.dimkar3000.rhesis.json"
+if [ "$SKIP_BUILD" = true ]; then
+    echo "Skipping flatpak build (--skip-build)"
+else
+    echo "Building flatpak..."
+    flatpak-builder \
+        --user \
+        --force-clean \
+        --state-dir "$FLATPAK_STATE" \
+        "$FLATPAK_OUTPUT" \
+        "$PROJECT_DIR/io.github.dimkar3000.rhesis.json"
+fi
 
 echo "Build complete."
 
