@@ -12,6 +12,7 @@ FLATPAK_ARTIFACT_DIR="$ARTIFACTS_DIR/flatpak"
 
 # --- Parse arguments ---
 CLEAN_BUILD=false
+INSTALL_RUNTIMES=true
 
 source "$SCRIPT_DIR/common.sh"
 
@@ -20,6 +21,7 @@ while [[ $# -gt 0 ]]; do
         --clean) CLEAN_BUILD=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         --no-spinner) NO_SPINNER=true; shift ;;
+        --no-runtimes) INSTALL_RUNTIMES=false; shift ;;
         --help)
             echo "Usage: $(basename "$0") [OPTIONS]"
             echo ""
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --clean         Clean and rebuild artifacts from scratch, then build the Flatpak"
             echo "  --verbose       Show full command output (default: quiet)"
             echo "  --no-spinner    Disable spinner animation (plain output)"
+            echo "  --no-runtimes   Skip installing flatpak runtimes (use when already installed)"
             echo "  --help          Show this help message and exit"
             exit 0
             ;;
@@ -54,7 +57,9 @@ main() {
     echo "=== Flatpak Build ==="
     echo ""
 
-    step "Installing flatpak runtimes" install_runtimes
+    if [ "$INSTALL_RUNTIMES" = true ]; then
+        step "Installing flatpak runtimes" install_runtimes
+    fi
     step "Building flatpak" build_flatpak
     step "Exporting to local repo" export_bundle
 

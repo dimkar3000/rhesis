@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
         --clean) CLEAN_BUILD=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         --no-spinner) NO_SPINNER=true; shift ;;
+        --linuxdeploy) LINUXDEPLOY="$2"; shift 2 ;;
+        --appimagetool) APPIMAGETOOL="$2"; shift 2 ;;
         --help)
             echo "Usage: $(basename "$0") [OPTIONS]"
             echo ""
@@ -30,10 +32,12 @@ while [[ $# -gt 0 ]]; do
             echo "Run build-common.sh first to produce artifacts."
             echo ""
             echo "Options:"
-            echo "  --clean         Clean and rebuild artifacts from scratch, then build the AppImage"
-            echo "  --verbose       Show full command output (default: quiet)"
-            echo "  --no-spinner    Disable spinner animation (plain output)"
-            echo "  --help          Show this help message and exit"
+            echo "  --clean              Clean and rebuild artifacts from scratch, then build the AppImage"
+            echo "  --verbose            Show full command output (default: quiet)"
+            echo "  --no-spinner         Disable spinner animation (plain output)"
+            echo "  --linuxdeploy PATH   Use pre-installed linuxdeploy AppImage at PATH"
+            echo "  --appimagetool PATH  Use pre-installed appimagetool AppImage at PATH"
+            echo "  --help               Show this help message and exit"
             exit 0
             ;;
         *) echo "Unknown option: $1"; echo "Use --help for available options"; exit 1 ;;

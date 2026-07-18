@@ -2,12 +2,25 @@ FROM ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
 
 RUN flatpak install --noninteractive -y \
     org.freedesktop.Sdk.Extension.rust-stable//24.08 \
-    org.freedesktop.Sdk.Extension.openjdk17//24.08
+    org.freedesktop.Sdk.Extension.openjdk17//24.08 \
+    runtime/org.kde.Platform.Locale//6.11 \
+    runtime/org.freedesktop.Sdk.Extension.openjdk17/x86_64/25.08 \
+    runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08 \
+    org.kde.Sdk//6.11 \
+    org.kde.Platform//6.11
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt flatpak-cargo-generator
 
 RUN flatpak update --noninteractive -y
+
+ENV SDK=/var/lib/flatpak/runtime/org.kde.Sdk/x86_64/6.11/active/files
+ENV RUST_SDK=/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/24.08/active/files
+ENV JAVA_HOME=/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.openjdk17/x86_64/24.08/active/files/jvm/openjdk-17
+ENV CMAKE_PREFIX_PATH=$SDK/lib/x86_64-linux-gnu/cmake:$SDK/share/ECM/cmake
+ENV PATH=$SDK/bin:$RUST_SDK/bin:$JAVA_HOME/bin:$PATH
+
+RUN echo "$SDK/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/sdk-qt.conf && ldconfig
 
 # Install mold linker (static binary, used via .cargo/config.toml's -fuse-ld=mold)
 RUN wget -q -O /tmp/mold.tar.gz \

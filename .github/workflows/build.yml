@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.10
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
       options: --privileged
     env:
       APPIMAGE_EXTRACT_AND_RUN: 1
@@ -18,57 +18,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add flathub remote
-        run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-
-      - name: Setup SDK paths for AppImage build
-        run: |
-          SDK="/var/lib/flatpak/runtime/org.kde.Sdk/x86_64/6.10/active/files"
-          RUST="/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08/active/files"
-          JAVA="/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.openjdk17/x86_64/25.08/active/files/jvm/openjdk-17.0.19"
-
-          echo "SDK=$SDK" >> "$GITHUB_ENV"
-          echo "RUST_SDK=$RUST" >> "$GITHUB_ENV"
-          echo "JAVA_HOME=$JAVA" >> "$GITHUB_ENV"
-          echo "CMAKE_PREFIX_PATH=$SDK/lib/x86_64-linux-gnu/cmake:$SDK/share/ECM/cmake" >> "$GITHUB_ENV"
-
-          echo "$RUST/bin" >> "$GITHUB_PATH"
-          echo "$JAVA/bin" >> "$GITHUB_PATH"
-          echo "$SDK/bin" >> "$GITHUB_PATH"
-
-          echo "$SDK/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/sdk-qt.conf
-          ldconfig
-
-      - name: Build Rust binary
-        run: |
-          ./scripts/build-common.sh
+      - name: Build artifacts
+        run: ./scripts/build-common.sh --verbose --no-spinner
 
       - name: Build Flatpak
-        run: |
-          flatpak-builder \
-            --disable-rofiles-fuse \
-            --force-clean \
-            --repo=build/repo \
-            build/flatpak-build-dir \
-            io.github.dimkar3000.rhesis.json
-          flatpak build-bundle build/repo build/rhesis.flatpak io.github.dimkar3000.rhesis
+        run: ./scripts/build-flatpak.sh --verbose --no-spinner --no-runtimes
 
       - name: Build AppImage
         run: |
           ./scripts/build-appimage.sh \
-            --linuxdeploy /opt/appimage-tools/linuxdeploy-x86_64.AppImage
+            --linuxdeploy /opt/appimage-tools/linuxdeploy-x86_64.AppImage \
+            --appimagetool /opt/appimage-tools/appimagetool-x86_64.AppImage \
+            --verbose \
+            --no-spinner
 
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
           name: flatpak
-          path: build/rhesis.flatpak
+          path: build/artifacts/flatpak/*.flatpak
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: appimages
-          path: build/rhesis-*.AppImage
+          path: build/artifacts/appimage/*.AppImage
 
   release:
     needs: [build]
