@@ -66,6 +66,9 @@ create_appdir() {
     cp -r "$ARTIFACTS_DIR/java/jre" "$APPDIR/"
     cp "$ARTIFACTS_DIR/fastText/fasttext" "$APPDIR/fasttext"
     ln -sf "../../jre/bin/java" "$APPDIR/usr/bin/java"
+
+    ln -sf usr/share/applications/io.github.dimkar3000.rhesis.desktop "$APPDIR/"
+    ln -sf usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png "$APPDIR/"
 }
 
 bundle_qt() {
@@ -117,20 +120,15 @@ EOF
 }
 
 write_apprun() {
-    rm -f "$APPDIR/AppRun"
     cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
 HERE=$(dirname "$(readlink -f "$0")")
 export PATH="${HERE}/usr/bin:${PATH}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
-export QML2_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
+export RHESIS_LANGUAGETOOL_DIR="${HERE}/LanguageTool"
 exec "${HERE}/usr/bin/rhesis" "$@"
 APPRUN
     chmod +x "$APPDIR/AppRun"
-
-    ln -sf usr/share/applications/io.github.dimkar3000.rhesis.desktop "$APPDIR/"
-    ln -sf usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png "$APPDIR/"
 }
 
 create_appimage() {
