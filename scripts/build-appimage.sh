@@ -156,8 +156,8 @@ main() {
     download_tool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" "$APPIMAGETOOL"
 
     step "Creating AppDir" create_appdir
-    step "Bundling Qt and KDE dependencies" bundle_qt
     step "Writing AppRun" write_apprun
+    step "Bundling Qt and KDE dependencies" bundle_qt
     step "Creating AppImage" create_appimage
 
     echo ""
