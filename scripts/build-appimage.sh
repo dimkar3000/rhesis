@@ -85,6 +85,7 @@ bundle_qt() {
         cp -r "$qml_src/org" "$APPDIR/usr/lib/qt6/qml/"
     fi
 
+    export PATH="$TOOLS_DIR:$PATH"
     export QMAKE="$(command -v qmake6 || command -v qmake || true)"
     "$LINUXDEPLOY" --appdir "$APPDIR" \
         --executable "$APPDIR/usr/bin/rhesis" \
