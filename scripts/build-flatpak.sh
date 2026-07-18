@@ -75,6 +75,7 @@ install_runtimes() {
 build_flatpak() {
     flatpak-builder \
         --user \
+        --disable-rofiles-fuse \
         --force-clean \
         --state-dir "$FLATPAK_STATE" \
         "$FLATPAK_OUTPUT" \
