@@ -57,7 +57,7 @@ create_appdir() {
     rm -rf "$APPDIR"
     mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib"
 
-    cp "$ARTIFACTS_DIR/app/rhesis" "$APPDIR/usr/"
+    cp "$ARTIFACTS_DIR/app/rhesis" "$APPDIR/usr/bin/"
     cp -r "$ARTIFACTS_DIR/app/translations" "$APPDIR/usr/" 2>/dev/null || true
     cp -r "$ARTIFACTS_DIR/app/share" "$APPDIR/usr/"
 
@@ -84,7 +84,7 @@ bundle_qt() {
 
     export QMAKE="$(command -v qmake6 || command -v qmake || true)"
     "$LINUXDEPLOY" --appdir "$APPDIR" \
-        --executable "$APPDIR/usr/rhesis" \
+        --executable "$APPDIR/usr/bin/rhesis" \
         --desktop-file "$APPDIR/usr/share/applications/io.github.dimkar3000.rhesis.desktop" \
         --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png" \
         || true
@@ -117,6 +117,7 @@ EOF
 }
 
 write_apprun() {
+    rm -f "$APPDIR/AppRun"
     cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
 HERE=$(dirname "$(readlink -f "$0")")
@@ -124,7 +125,7 @@ export PATH="${HERE}/usr/bin:${PATH}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
 export QML2_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
-exec "${HERE}/usr/rhesis" "$@"
+exec "${HERE}/usr/bin/rhesis" "$@"
 APPRUN
     chmod +x "$APPDIR/AppRun"
 
