@@ -6,3 +6,4 @@ build
 CMakeFiles
 cargo-sources.json
 translations/*.qm
+fasttext-src

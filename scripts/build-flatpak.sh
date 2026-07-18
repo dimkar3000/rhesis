@@ -5,79 +5,81 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 BUILD_DIR="$PROJECT_DIR/build"
-VENV_DIR="$BUILD_DIR/venv"
-GENERATOR_SCRIPT="$BUILD_DIR/flatpak-cargo-generator.py"
-CARGO_SOURCES="$BUILD_DIR/cargo-sources.json"
 FLATPAK_OUTPUT="$BUILD_DIR/flatpak-build-dir"
 FLATPAK_STATE="$BUILD_DIR/flatpak-state"
+ARTIFACTS_DIR="$BUILD_DIR/artifacts"
+FLATPAK_ARTIFACT_DIR="$ARTIFACTS_DIR/flatpak"
 
 # --- Parse arguments ---
-SKIP_BUILD=false
+CLEAN_BUILD=false
+
+source "$SCRIPT_DIR/common.sh"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --skip-build)
-            SKIP_BUILD=true
-            shift
+        --clean) CLEAN_BUILD=true; shift ;;
+        --verbose) VERBOSE=true; shift ;;
+        --no-spinner) NO_SPINNER=true; shift ;;
+        --help)
+            echo "Usage: $(basename "$0") [OPTIONS]"
+            echo ""
+            echo "Builds a Flatpak from pre-built artifacts."
+            echo "Run build-common.sh first to produce artifacts."
+            echo ""
+            echo "Options:"
+            echo "  --clean         Clean and rebuild artifacts from scratch, then build the Flatpak"
+            echo "  --verbose       Show full command output (default: quiet)"
+            echo "  --no-spinner    Disable spinner animation (plain output)"
+            echo "  --help          Show this help message and exit"
+            exit 0
             ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
+        *) echo "Unknown option: $1"; echo "Use --help for available options"; exit 1 ;;
     esac
 done
 
-cd "$SCRIPT_DIR"
+# --- Main ---
+main() {
+    COMMON_ARGS=()
+    [ "$VERBOSE" = true ] && COMMON_ARGS+=(--verbose)
+    [ "$NO_SPINNER" = true ] && COMMON_ARGS+=(--no-spinner)
 
-mkdir -p "$BUILD_DIR"
+    if [ "$CLEAN_BUILD" = true ]; then
+        "$SCRIPT_DIR/build-common.sh" --clean "${COMMON_ARGS[@]}"
+    fi
 
-# --- Install flatpak runtimes and extensions ---
-echo "Ensuring flatpak runtimes and extensions are installed..."
-flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user --noninteractive flathub org.kde.Platform//6.10
-flatpak install --user --noninteractive flathub org.kde.Sdk//6.10
-flatpak install --user --noninteractive flathub org.freedesktop.Sdk.Extension.rust-stable//24.08
-flatpak install --user --noninteractive flathub org.freedesktop.Sdk.Extension.openjdk17//24.08
+    if [ ! -d "$ARTIFACTS_DIR/app" ]; then
+        "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
+    fi
 
-# --- Python virtual environment ---
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating Python virtual environment..."
-    python3 -m venv "$VENV_DIR"
-fi
+    echo "=== Flatpak Build ==="
+    echo ""
 
-source "$VENV_DIR/bin/activate"
+    step "Installing flatpak runtimes" install_runtimes
+    step "Building flatpak" build_flatpak
+    step "Exporting to local repo" export_bundle
 
-echo "Installing Python dependencies..."
-pip install -q -r "$PROJECT_DIR/requirements.txt"
+    echo ""
+    echo "Bundle created: $FLATPAK_ARTIFACT_DIR/rhesis.flatpak"
+}
 
-# --- Download flatpak-cargo-generator and generate vendored sources ---
-GENERATOR_URL="https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py"
+install_runtimes() {
+    flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    flatpak install --user --noninteractive flathub org.kde.Platform//6.11
+}
 
-if [ ! -f "$GENERATOR_SCRIPT" ]; then
-    echo "Downloading flatpak-cargo-generator.py..."
-    curl -fsSLo "$GENERATOR_SCRIPT" "$GENERATOR_URL"
-fi
-
-echo "Generating cargo-sources.json..."
-python "$GENERATOR_SCRIPT" "$PROJECT_DIR/Cargo.lock" -o "$CARGO_SOURCES"
-
-# --- Build flatpak ---
-if [ "$SKIP_BUILD" = true ]; then
-    echo "Skipping flatpak build (--skip-build)"
-else
-    echo "Building flatpak..."
+build_flatpak() {
     flatpak-builder \
         --user \
         --force-clean \
         --state-dir "$FLATPAK_STATE" \
         "$FLATPAK_OUTPUT" \
         "$PROJECT_DIR/io.github.dimkar3000.rhesis.json"
-fi
+}
 
-echo "Build complete."
+export_bundle() {
+    flatpak build-export "$BUILD_DIR/rhesis-master" "$FLATPAK_OUTPUT"
+    mkdir -p "$FLATPAK_ARTIFACT_DIR"
+    flatpak build-bundle "$BUILD_DIR/rhesis-master" "$FLATPAK_ARTIFACT_DIR/rhesis.flatpak" io.github.dimkar3000.rhesis
+}
 
-echo "Exporting to local repo..."
-flatpak build-export "$BUILD_DIR/rhesis-master" "$FLATPAK_OUTPUT"
-echo "Creating bundle..."
-flatpak build-bundle "$BUILD_DIR/rhesis-master" "$BUILD_DIR/rhesis.flatpak" io.github.dimkar3000.rhesis
-echo "Bundle created: $BUILD_DIR/rhesis.flatpak"
+main "$@"

@@ -1,0 +1,102 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.10
+      options: --privileged
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add flathub remote
+        run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Setup SDK paths for AppImage build
+        run: |
+          SDK="/var/lib/flatpak/runtime/org.kde.Sdk/x86_64/6.10/active/files"
+          RUST="/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08/active/files"
+          JAVA="/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.openjdk17/x86_64/25.08/active/files/jvm/openjdk-17.0.19"
+
+          echo "SDK=$SDK" >> "$GITHUB_ENV"
+          echo "RUST_SDK=$RUST" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$SDK/lib/x86_64-linux-gnu/cmake:$SDK/share/ECM/cmake" >> "$GITHUB_ENV"
+
+          echo "$RUST/bin" >> "$GITHUB_PATH"
+          echo "$JAVA/bin" >> "$GITHUB_PATH"
+          echo "$SDK/bin" >> "$GITHUB_PATH"
+
+          echo "$SDK/lib/x86_64-linux-gnu" > /etc/ld.so.conf.d/sdk-qt.conf
+          ldconfig
+
+      - name: Build Rust binary
+        run: |
+          ./scripts/build-common.sh
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder \
+            --disable-rofiles-fuse \
+            --force-clean \
+            --repo=build/repo \
+            build/flatpak-build-dir \
+            io.github.dimkar3000.rhesis.json
+          flatpak build-bundle build/repo build/rhesis.flatpak io.github.dimkar3000.rhesis
+
+      - name: Build AppImage
+        run: |
+          ./scripts/build-appimage.sh \
+            --linuxdeploy /opt/appimage-tools/linuxdeploy-x86_64.AppImage
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: build/rhesis.flatpak
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimages
+          path: build/rhesis-*.AppImage
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          cp artifacts/flatpak/*.flatpak release/
+          cp artifacts/appimages/*.AppImage release/
+          ls -lh release/
+
+      - name: Generate release body from metainfo
+        run: python3 scripts/release-body.py io.github.dimkar3000.rhesis.metainfo.xml > release_body.md
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release_body.md

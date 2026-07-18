@@ -27,6 +27,29 @@ FASTTEXT_DIR="$BUILD_DIR/fastText"
 LID_MODEL_URL="${LID_MODEL_URL:-https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz}"
 LID_MODEL_FILE="$BUILD_DIR/lid.176.ftz"
 
+# --- Main ---
+main() {
+    echo "========================================"
+    echo "  Rhesis - LanguageTool Setup Script"
+    echo "========================================"
+    echo ""
+
+    mkdir -p "$BUILD_DIR"
+    check_prerequisites
+    download_languagetool
+    setup_fasttext
+    download_lid_model
+
+    echo ""
+    info "Setup complete!"
+    echo ""
+    echo "  LanguageTool: $BUILD_DIR/LanguageTool"
+    echo "  fastText:     $BUILD_DIR/fastText"
+    echo "  lid model:    $BUILD_DIR/lid.176.ftz"
+    echo ""
+    echo "You can now run 'cargo build' or 'scripts/build-flatpak.sh' to build the application."
+}
+
 check_prerequisites() {
     local missing=()
 
@@ -124,32 +147,10 @@ download_lid_model() {
     fi
 
     info "Downloading language identification model (lid.176.ftz)..."
-    
+
     curl -fsSLo "$LID_MODEL_FILE" "$LID_MODEL_URL"
 
     info "lid.176.ftz downloaded (size: $(du -h "$LID_MODEL_FILE" | cut -f1))."
-}
-
-main() {
-    echo "========================================"
-    echo "  Rhesis - LanguageTool Setup Script"
-    echo "========================================"
-    echo ""
-
-    mkdir -p "$BUILD_DIR"
-    check_prerequisites
-    download_languagetool
-    setup_fasttext
-    download_lid_model
-    
-    echo ""
-    info "Setup complete!"
-    echo ""
-    echo "  LanguageTool: $BUILD_DIR/LanguageTool"
-    echo "  fastText:     $BUILD_DIR/fastText"
-    echo "  lid model:    $BUILD_DIR/lid.176.ftz"
-    echo ""
-    echo "You can now run 'cargo build' or 'scripts/build-flatpak.sh' to build the application."
 }
 
 main "$@"
