@@ -73,7 +73,7 @@ create_appdir() {
 
 bundle_qt() {
     local qml_src=""
-    for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml; do
+    for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml "${SDK:-}/lib/x86_64-linux-gnu/qt6/qml"; do
         [ -d "$d" ] && { qml_src="$d"; break; }
     done
 
@@ -101,7 +101,7 @@ Qml2Imports = lib/qt6/qml
 EOF
 
     local qt_plugin_dir=""
-    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins; do
+    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins"; do
         [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
     done
 
