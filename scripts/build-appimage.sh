@@ -73,16 +73,24 @@ create_appdir() {
 
 bundle_qt() {
     local qml_src=""
-    for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml "${SDK:-}/lib/x86_64-linux-gnu/qt6/qml"; do
-        [ -d "$d" ] && { qml_src="$d"; break; }
-    done
+    if command -v qmake6 &>/dev/null; then
+        qml_src=$(qmake6 -query QT_INSTALL_QML 2>/dev/null || true)
+    elif command -v qmake &>/dev/null; then
+        qml_src=$(qmake -query QT_INSTALL_QML 2>/dev/null || true)
+    fi
+    if [ -z "$qml_src" ] || [ ! -d "$qml_src" ]; then
+        qml_src=""
+        for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml \
+                 /usr/lib/qml \
+                 "${SDK:-}/lib/x86_64-linux-gnu/qt6/qml" \
+                 "${SDK:-}/lib/qml"; do
+            [ -d "$d" ] && { qml_src="$d"; break; }
+        done
+    fi
 
     if [ -n "$qml_src" ]; then
         mkdir -p "$APPDIR/usr/lib/qt6/qml"
-        for mod in "$qml_src"/Qt* "$qml_src"/Qt6*; do
-            [ -d "$mod" ] && cp -r "$mod" "$APPDIR/usr/lib/qt6/qml/"
-        done
-        cp -r "$qml_src/org" "$APPDIR/usr/lib/qt6/qml/"
+        cp -r "$qml_src/"Qt* "$qml_src/org" "$APPDIR/usr/lib/qt6/qml/" 2>/dev/null || true
     fi
 
     export PATH="$TOOLS_DIR:$PATH"
@@ -153,7 +161,9 @@ main() {
     [ "$NO_SPINNER" = true ] && COMMON_ARGS+=(--no-spinner)
     [ "$CLEAN_BUILD" = true ] && COMMON_ARGS+=(--clean)
 
-    "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
+    if [ ! -d "$ARTIFACTS_DIR/app" ] || [ "$CLEAN_BUILD" = true ]; then
+        "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
+    fi
 
     echo "=== AppImage Build ==="
     echo ""

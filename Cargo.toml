@@ -26,6 +26,11 @@ lto = true
 codegen-units = 1
 strip = true
 
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [build-dependencies]
 # The link_qt_object_files feature is required for statically linking Qt 6.
 cxx-qt-build = { version = "0.9.0", features = [ "link_qt_object_files" ] }

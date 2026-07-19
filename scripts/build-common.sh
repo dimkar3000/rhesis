@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Configuration ---
-RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release}"
+RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release-fast}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-}"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 
@@ -67,12 +67,11 @@ main() {
 
 build_rust_app() {
     local binary=""
-    if [ -f "$BUILD_DIR/cmake-build/release/rhesis" ]; then
-        binary="$BUILD_DIR/cmake-build/release/rhesis"
+    local binary_dir="$BUILD_DIR/cmake-build/$RUST_BUILD_TYPE"
+    if [ -f "$binary_dir/rhesis" ]; then
+        binary="$binary_dir/rhesis"
     elif [ -f "$BUILD_DIR/cmake-build/rhesis" ]; then
         binary="$BUILD_DIR/cmake-build/rhesis"
-    elif [ -f "$PROJECT_DIR/build/target/release/rhesis" ]; then
-        binary="$PROJECT_DIR/build/target/release/rhesis"
     fi
 
     if [ -n "$binary" ]; then
@@ -87,7 +86,9 @@ build_rust_app() {
         export LD_LIBRARY_PATH="${SDK}/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    cmake -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" "$PROJECT_DIR"
+    cmake -DCARGO_BUILD_PROFILE="$RUST_BUILD_TYPE" \
+          -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+          "$PROJECT_DIR"
     make -j$(nproc)
 
     cd "$PROJECT_DIR"
@@ -115,19 +116,18 @@ install_app() {
     mkdir -p "$bin_dir" "$share_dir"
 
     local cmake_build="$BUILD_DIR/cmake-build"
-    if [ -f "$cmake_build/release/rhesis" ]; then
-        cp "$cmake_build/release/rhesis" "$bin_dir/"
+    local binary_dir="$cmake_build/$RUST_BUILD_TYPE"
+    if [ -f "$binary_dir/rhesis" ]; then
+        cp "$binary_dir/rhesis" "$bin_dir/"
     elif [ -f "$cmake_build/rhesis" ]; then
         cp "$cmake_build/rhesis" "$bin_dir/"
-    elif [ -f "$PROJECT_DIR/build/target/release/rhesis" ]; then
-        cp "$PROJECT_DIR/build/target/release/rhesis" "$bin_dir/"
     else
-        echo "Error: Binary not found in $cmake_build or build/target/release" >&2
+        echo "Error: Binary not found in $binary_dir or $cmake_build" >&2
         return 1
     fi
 
     local translations_installed=false
-    if [ -d "$cmake_build/release/translations" ]; then
+    if [ -d "$binary_dir/translations" ]; then
         mkdir -p "$bin_dir/translations"
         cp "$cmake_build/release/translations/"*.qm "$bin_dir/translations/" 2>/dev/null && translations_installed=true
     elif [ -d "$cmake_build/translations" ]; then

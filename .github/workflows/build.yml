@@ -18,7 +18,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Determine build profile
+        id: profile
+        run: |
+          if [[ "${{ github.ref_name }}" == v*-* ]]; then
+            echo "profile=release-fast" >> "$GITHUB_OUTPUT"
+          else
+            echo "profile=release" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build artifacts
+        env:
+          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
         run: ./scripts/build-common.sh --verbose --no-spinner
 
       - name: Build Flatpak

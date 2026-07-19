@@ -19,19 +19,22 @@ find_package(Qt6 REQUIRED COMPONENTS Gui)
 find_package(Qt6 COMPONENTS QmlTools QUIET)
 find_package(Qt6 COMPONENTS LinguistTools QUIET)
 
+# --- Options ---
+set(CARGO_BUILD_PROFILE "release" CACHE STRING "Cargo build profile (release, release-fast, debug)")
+
 # --- Build the Rust binary ---
 add_custom_target(rhesis_build ALL
-    COMMAND cargo build --target-dir ${CMAKE_CURRENT_BINARY_DIR}
-              $<IF:$<CONFIG:Debug>,,--release>
+    COMMAND cargo build --profile ${CARGO_BUILD_PROFILE}
+              --target-dir ${CMAKE_CURRENT_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Building rhesis with cargo"
+    COMMENT "Building rhesis with cargo (profile=${CARGO_BUILD_PROFILE})"
 )
 
 # Determine binary output location
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(CARGO_BUILD_PROFILE STREQUAL "debug")
     set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/debug/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
 else()
-    set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/release/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
+    set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/${CARGO_BUILD_PROFILE}/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
 endif()
 
 # --- Translations ---
