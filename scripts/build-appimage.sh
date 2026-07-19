@@ -87,21 +87,18 @@ bundle_qt() {
 
     export PATH="$TOOLS_DIR:$PATH"
     export QMAKE="$(command -v qmake6 || command -v qmake || true)"
-    "$LINUXDEPLOY" --appdir "$APPDIR" \
+    # linuxdeploy's bundled strip doesn't understand modern ELF sections (.relr.dyn)
+    NO_STRIP=1 "$LINUXDEPLOY" --appdir "$APPDIR" \
         --executable "$APPDIR/usr/bin/rhesis" \
         --desktop-file "$APPDIR/usr/share/applications/io.github.dimkar3000.rhesis.desktop" \
-        --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png" \
-        || true
+        --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png"
 
-    cat > "$APPDIR/usr/qt.conf" << 'EOF'
-[Paths]
-Prefix = .
-Plugins = lib/qt6/plugins
-Qml2Imports = lib/qt6/qml
-EOF
-
+    # Search for the Qt6 plugin directory across distro and SDK conventions.
+    # Debian/Ubuntu uses /usr/lib/x86_64-linux-gnu/qt6/plugins,
+    # Fedora uses /usr/lib64/qt6/plugins, Arch uses /usr/lib/qt6/plugins,
+    # and the Flatpak KDE Platform ships them at /usr/lib/plugins.
     local qt_plugin_dir=""
-    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins"; do
+    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins /usr/lib/plugins "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins"; do
         [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
     done
 
@@ -126,6 +123,8 @@ write_apprun() {
 HERE=$(dirname "$(readlink -f "$0")")
 export PATH="${HERE}/usr/bin:${PATH}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
+export QML2_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
 export RHESIS_LANGUAGETOOL_DIR="${HERE}/LanguageTool"
 exec "${HERE}/usr/bin/rhesis" "$@"
 APPRUN
