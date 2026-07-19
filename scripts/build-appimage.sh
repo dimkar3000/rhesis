@@ -93,14 +93,22 @@ bundle_qt() {
         --desktop-file "$APPDIR/usr/share/applications/io.github.dimkar3000.rhesis.desktop" \
         --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png"
 
-    # Search for the Qt6 plugin directory across distro and SDK conventions.
-    # Debian/Ubuntu uses /usr/lib/x86_64-linux-gnu/qt6/plugins,
-    # Fedora uses /usr/lib64/qt6/plugins, Arch uses /usr/lib/qt6/plugins,
-    # and the Flatpak KDE Platform ships them at /usr/lib/plugins.
     local qt_plugin_dir=""
-    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins /usr/lib/plugins "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins"; do
-        [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
-    done
+    if command -v qmake6 &>/dev/null; then
+        qt_plugin_dir=$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null || true)
+    elif command -v qmake &>/dev/null; then
+        qt_plugin_dir=$(qmake -query QT_INSTALL_PLUGINS 2>/dev/null || true)
+    fi
+    if [ -z "$qt_plugin_dir" ] || [ ! -d "$qt_plugin_dir" ]; then
+        qt_plugin_dir=""
+        for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins \
+                 /usr/lib/x86_64-linux-gnu/qt6/plugins \
+                 /usr/lib/plugins \
+                 "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins" \
+                 "${SDK:-}/lib/plugins"; do
+            [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
+        done
+    fi
 
     if [ -n "$qt_plugin_dir" ]; then
         mkdir -p "$APPDIR/usr/lib/qt6/plugins/platforms"
