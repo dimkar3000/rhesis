@@ -138,7 +138,7 @@ write_apprun() {
 #!/bin/bash
 HERE=$(dirname "$(readlink -f "$0")")
 export PATH="${HERE}/usr/bin:${PATH}"
-export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
 export QML2_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
 export RHESIS_LANGUAGETOOL_DIR="${HERE}/LanguageTool"
