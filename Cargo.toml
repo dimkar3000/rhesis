@@ -30,6 +30,8 @@ strip = true
 inherits = "release"
 lto = "thin"
 codegen-units = 16
+strip = "none"
+debug = true
 
 [build-dependencies]
 # The link_qt_object_files feature is required for statically linking Qt 6.
