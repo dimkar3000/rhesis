@@ -147,6 +147,13 @@ APPRUN
     chmod +x "$APPDIR/AppRun"
 }
 
+remove_bundled_system_libs() {
+    local lib_dir="$APPDIR/usr/lib"
+    for lib in libxkbcommon.so.0 libwayland-cursor.so.0 libwayland-server.so.0; do
+        rm -f "$lib_dir/$lib"
+    done
+}
+
 create_appimage() {
     mkdir -p "$ARTIFACTS_DIR/appimage"
     ARCH=x86_64 "$APPIMAGETOOL" --no-appstream "$APPDIR" \
@@ -175,6 +182,7 @@ main() {
     step "Creating AppDir" create_appdir
     step "Writing AppRun" write_apprun
     step "Bundling Qt and KDE dependencies" bundle_qt
+    step "Removing incompatible bundled system libraries" remove_bundled_system_libs
     step "Creating AppImage" create_appimage
 
     echo ""
