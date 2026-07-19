@@ -27,28 +27,6 @@ jobs:
             echo "profile=release" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Cargo registry cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: cargo-registry-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-registry-
-
-      - name: Cargo build cache
-        id: cargo-build-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            build/cmake-build
-            build/artifacts
-          key: cargo-build-${{ runner.arch }}-${{ steps.profile.outputs.profile }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'build.rs', 'resources.qrc', 'src/**/*.rs', 'src/**/*.cpp', 'src/**/*.h') }}
-          restore-keys: |
-            cargo-build-${{ runner.arch }}-${{ steps.profile.outputs.profile }}-
-            cargo-build-${{ runner.arch }}-
-
       - name: Build artifacts
         env:
           RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
