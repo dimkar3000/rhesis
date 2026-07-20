@@ -58,7 +58,7 @@ create_appdir() {
     mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib"
 
     cp "$ARTIFACTS_DIR/app/rhesis" "$APPDIR/usr/bin/"
-    cp -r "$ARTIFACTS_DIR/app/translations" "$APPDIR/" 2>/dev/null || true
+    cp -r "$ARTIFACTS_DIR/app/translations" "$APPDIR/usr/bin/" 2>/dev/null || true
     cp -r "$ARTIFACTS_DIR/app/share" "$APPDIR/usr/"
 
     cp -r "$ARTIFACTS_DIR/app/LanguageTool" "$APPDIR/"
@@ -168,9 +168,7 @@ main() {
     [ "$NO_SPINNER" = true ] && COMMON_ARGS+=(--no-spinner)
     [ "$CLEAN_BUILD" = true ] && COMMON_ARGS+=(--clean)
 
-    if [ ! -d "$ARTIFACTS_DIR/app" ] || [ "$CLEAN_BUILD" = true ]; then
-        "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
-    fi
+    "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
 
     echo "=== AppImage Build ==="
     echo ""

@@ -45,6 +45,7 @@ main() {
     echo "=== Common Build Script ==="
     echo "Build type: $RUST_BUILD_TYPE"
     echo "Install root: $install_root"
+    echo "Profile: $RUST_BUILD_TYPE"
     echo ""
 
     if [ "$CLEAN_BUILD" = true ]; then

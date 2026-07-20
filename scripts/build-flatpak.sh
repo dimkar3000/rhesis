@@ -45,14 +45,9 @@ main() {
     COMMON_ARGS=()
     [ "$VERBOSE" = true ] && COMMON_ARGS+=(--verbose)
     [ "$NO_SPINNER" = true ] && COMMON_ARGS+=(--no-spinner)
+    [ "$CLEAN_BUILD" = true ] && COMMON_ARGS+=(--clean)
 
-    if [ "$CLEAN_BUILD" = true ]; then
-        "$SCRIPT_DIR/build-common.sh" --clean "${COMMON_ARGS[@]}"
-    fi
-
-    if [ ! -d "$ARTIFACTS_DIR/app" ]; then
-        "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
-    fi
+    "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
 
     echo "=== Flatpak Build ==="
     echo ""
