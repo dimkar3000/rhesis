@@ -12,6 +12,7 @@ FLATPAK_ARTIFACT_DIR="$ARTIFACTS_DIR/flatpak"
 
 # --- Parse arguments ---
 CLEAN_BUILD=false
+INSTALL_RUNTIMES=true
 
 source "$SCRIPT_DIR/common.sh"
 
@@ -20,6 +21,7 @@ while [[ $# -gt 0 ]]; do
         --clean) CLEAN_BUILD=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         --no-spinner) NO_SPINNER=true; shift ;;
+        --no-runtimes) INSTALL_RUNTIMES=false; shift ;;
         --help)
             echo "Usage: $(basename "$0") [OPTIONS]"
             echo ""
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --clean         Clean and rebuild artifacts from scratch, then build the Flatpak"
             echo "  --verbose       Show full command output (default: quiet)"
             echo "  --no-spinner    Disable spinner animation (plain output)"
+            echo "  --no-runtimes   Skip installing flatpak runtimes (use when already installed)"
             echo "  --help          Show this help message and exit"
             exit 0
             ;;
@@ -42,19 +45,16 @@ main() {
     COMMON_ARGS=()
     [ "$VERBOSE" = true ] && COMMON_ARGS+=(--verbose)
     [ "$NO_SPINNER" = true ] && COMMON_ARGS+=(--no-spinner)
+    [ "$CLEAN_BUILD" = true ] && COMMON_ARGS+=(--clean)
 
-    if [ "$CLEAN_BUILD" = true ]; then
-        "$SCRIPT_DIR/build-common.sh" --clean "${COMMON_ARGS[@]}"
-    fi
-
-    if [ ! -d "$ARTIFACTS_DIR/app" ]; then
-        "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
-    fi
+    "$SCRIPT_DIR/build-common.sh" "${COMMON_ARGS[@]}"
 
     echo "=== Flatpak Build ==="
     echo ""
 
-    step "Installing flatpak runtimes" install_runtimes
+    if [ "$INSTALL_RUNTIMES" = true ]; then
+        step "Installing flatpak runtimes" install_runtimes
+    fi
     step "Building flatpak" build_flatpak
     step "Exporting to local repo" export_bundle
 
@@ -70,6 +70,7 @@ install_runtimes() {
 build_flatpak() {
     flatpak-builder \
         --user \
+        --disable-rofiles-fuse \
         --force-clean \
         --state-dir "$FLATPAK_STATE" \
         "$FLATPAK_OUTPUT" \

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Configuration ---
-RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release}"
+RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release-fast}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-}"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 
@@ -45,6 +45,7 @@ main() {
     echo "=== Common Build Script ==="
     echo "Build type: $RUST_BUILD_TYPE"
     echo "Install root: $install_root"
+    echo "Profile: $RUST_BUILD_TYPE"
     echo ""
 
     if [ "$CLEAN_BUILD" = true ]; then
@@ -54,8 +55,9 @@ main() {
 
     step "Building application" build_rust_app
     step "Building fastText" build_fasttext
+    step "Downloading language model" setup_lid_model
     step "Installing application files" install_app "$install_root"
-    step "Setting up LanguageTool" setup_languagetool "$install_root"
+    step "Setting up LanguageTool" setup_languagetool
 
     local java_install_root="$BUILD_DIR/artifacts/java"
     step "Creating trimmed JRE" create_trimmed_jre "$java_install_root"
@@ -66,19 +68,6 @@ main() {
 }
 
 build_rust_app() {
-    local binary=""
-    if [ -f "$BUILD_DIR/cmake-build/release/rhesis" ]; then
-        binary="$BUILD_DIR/cmake-build/release/rhesis"
-    elif [ -f "$BUILD_DIR/cmake-build/rhesis" ]; then
-        binary="$BUILD_DIR/cmake-build/rhesis"
-    elif [ -f "$PROJECT_DIR/build/target/release/rhesis" ]; then
-        binary="$PROJECT_DIR/build/target/release/rhesis"
-    fi
-
-    if [ -n "$binary" ]; then
-        return
-    fi
-
     cd "$PROJECT_DIR"
     mkdir -p "$BUILD_DIR/cmake-build"
     cd "$BUILD_DIR/cmake-build"
@@ -87,7 +76,9 @@ build_rust_app() {
         export LD_LIBRARY_PATH="${SDK}/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
-    cmake -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" "$PROJECT_DIR"
+    cmake -DCARGO_BUILD_PROFILE="$RUST_BUILD_TYPE" \
+          -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+          "$PROJECT_DIR"
     make -j$(nproc)
 
     cd "$PROJECT_DIR"
@@ -109,42 +100,42 @@ build_fasttext() {
 # --- Install application files ---
 install_app() {
     local install_root="${1:-$BUILD_DIR/artifacts/app}"
-    local bin_dir="$install_root"
+    local bin_dir="$install_root/bin"
     local share_dir="$install_root/share"
 
     mkdir -p "$bin_dir" "$share_dir"
 
     local cmake_build="$BUILD_DIR/cmake-build"
-    if [ -f "$cmake_build/release/rhesis" ]; then
-        cp "$cmake_build/release/rhesis" "$bin_dir/"
+    local binary_dir="$cmake_build/$RUST_BUILD_TYPE"
+    if [ -f "$binary_dir/rhesis" ]; then
+        cp "$binary_dir/rhesis" "$bin_dir/"
     elif [ -f "$cmake_build/rhesis" ]; then
         cp "$cmake_build/rhesis" "$bin_dir/"
-    elif [ -f "$PROJECT_DIR/build/target/release/rhesis" ]; then
-        cp "$PROJECT_DIR/build/target/release/rhesis" "$bin_dir/"
     else
-        echo "Error: Binary not found in $cmake_build or build/target/release" >&2
+        echo "Error: Binary not found in $binary_dir or $cmake_build" >&2
         return 1
     fi
 
     local translations_installed=false
-    if [ -d "$cmake_build/release/translations" ]; then
-        mkdir -p "$bin_dir/translations"
-        cp "$cmake_build/release/translations/"*.qm "$bin_dir/translations/" 2>/dev/null && translations_installed=true
+    local trans_dir="$share_dir/rhesis/translations"
+    if [ -d "$binary_dir/translations" ]; then
+        mkdir -p "$trans_dir"
+        cp "$cmake_build/release/translations/"*.qm "$trans_dir/" 2>/dev/null && translations_installed=true
     elif [ -d "$cmake_build/translations" ]; then
-        mkdir -p "$bin_dir/translations"
-        cp "$cmake_build/translations/"*.qm "$bin_dir/translations/" 2>/dev/null && translations_installed=true
+        mkdir -p "$trans_dir"
+        cp "$cmake_build/translations/"*.qm "$trans_dir/" 2>/dev/null && translations_installed=true
     fi
     if [ "$translations_installed" = false ] && [ -d "$PROJECT_DIR/translations" ]; then
-        mkdir -p "$bin_dir/translations"
+        mkdir -p "$trans_dir"
         local lrelease_cmd="$(command -v lrelease6 || command -v lrelease || echo "")"
         if [ -n "$lrelease_cmd" ]; then
             for ts_file in "$PROJECT_DIR"/translations/*.ts; do
                 [ -f "$ts_file" ] || continue
-                "$lrelease_cmd" -silent "$ts_file" -qm "$bin_dir/translations/$(basename "${ts_file%.ts}.qm")"
+                "$lrelease_cmd" -silent "$ts_file" -qm "$trans_dir/$(basename "${ts_file%.ts}.qm")"
             done
             translations_installed=true
         else
-            cp "$PROJECT_DIR/translations/"*.qm "$bin_dir/translations/" 2>/dev/null || true
+            cp "$PROJECT_DIR/translations/"*.qm "$trans_dir/" 2>/dev/null || true
         fi
     fi
 
@@ -160,10 +151,9 @@ install_app() {
 
 # --- Setup LanguageTool ---
 setup_languagetool() {
-    local install_root="${1:-$BUILD_DIR/artifacts/app}"
-    local lt_dir="$install_root/LanguageTool"
+    local lt_dir="$BUILD_DIR/artifacts/LanguageTool"
 
-    if [ -f "$lt_dir/server.properties" ]; then
+    if [ -f "$lt_dir/languagetool-server.jar" ]; then
         return
     fi
 
@@ -185,20 +175,25 @@ setup_languagetool() {
     rm -rf "$lt_dir/META-INF/maven"
     rm -f "$lt_dir/CHANGES.md" "$lt_dir/CHANGES.txt" "$lt_dir/README.md"
 
-    cat > "$lt_dir/server.properties" << EOF
-fasttextModel=../lid.176.ftz
-fasttextBinary=../fasttext
-EOF
-
     local fasttext_dir="$BUILD_DIR/artifacts/fastText"
     mkdir -p "$fasttext_dir"
     cp "$BUILD_DIR/fasttext-src/fasttext" "$fasttext_dir/fasttext"
+}
+
+# --- Download fastText language model ---
+setup_lid_model() {
+    local lid_artifact="$BUILD_DIR/artifacts/lid.176.ftz"
+
+    if [ -f "$lid_artifact" ]; then
+        return
+    fi
 
     local lid_model="$BUILD_DIR/lid.176.ftz"
     if [ ! -f "$lid_model" ]; then
         wget -q -O "$lid_model" "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
     fi
-    cp "$lid_model" "$install_root/"
+    mkdir -p "$BUILD_DIR/artifacts"
+    cp "$lid_model" "$lid_artifact"
 }
 
 # --- Create trimmed JRE using jlink ---

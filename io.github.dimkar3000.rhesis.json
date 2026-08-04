@@ -17,14 +17,15 @@
 			"name": "rhesis",
 			"buildsystem": "simple",
 			"build-commands": [
-				"install -Dm755 rhesis /app/bin/rhesis",
-				"cp -r LanguageTool /app/",
-				"cp lid.176.ftz /app/",
-				"cp -r translations /app/bin/",
-				"mkdir -p /app/share && cp -r share/* /app/share/",
-				"install -Dm755 fasttext-source/fasttext /app/fasttext",
-				"cp -r java-source/jre /app/",
-				"ln -s /app/jre/bin/java /app/bin/java"
+				"install -Dm755 bin/rhesis /app/bin/rhesis",
+				"install -Dm755 fasttext-source/fasttext /app/bin/fasttext",
+				"install -Dm644 lid.176.ftz /app/share/rhesis/lid.176.ftz",
+				"mkdir -p /app/lib /app/share/rhesis",
+				"cp -r languagetool-source /app/share/rhesis/LanguageTool",
+				"printf 'fasttextModel=../../../share/rhesis/lid.176.ftz\\nfasttextBinary=../../../bin/fasttext\\n' > /app/share/rhesis/LanguageTool/server.properties",
+				"cp -r share/* /app/share/",
+				"cp -r java-source/jre /app/lib/",
+				"ln -s ../lib/jre/bin/java /app/bin/java"
 			],
 			"sources": [
 				{
@@ -35,6 +36,15 @@
 					"type": "dir",
 					"path": "build/artifacts/fastText",
 					"dest": "fasttext-source"
+				},
+				{
+					"type": "file",
+					"path": "build/artifacts/lid.176.ftz"
+				},
+				{
+					"type": "dir",
+					"path": "build/artifacts/LanguageTool",
+					"dest": "languagetool-source"
 				},
 				{
 					"type": "dir",

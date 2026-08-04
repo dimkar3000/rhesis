@@ -9,6 +9,7 @@ APPDIR="$BUILD_DIR/appimage/AppDir"
 TOOLS_DIR="$BUILD_DIR/tools/appimage"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
 VERSION=$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+export INSTALL_PREFIX="/"
 
 LINUXDEPLOY="$TOOLS_DIR/linuxdeploy-x86_64.AppImage"
 APPIMAGETOOL="$TOOLS_DIR/appimagetool-x86_64.AppImage"
@@ -23,6 +24,8 @@ while [[ $# -gt 0 ]]; do
         --clean) CLEAN_BUILD=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
         --no-spinner) NO_SPINNER=true; shift ;;
+        --linuxdeploy) LINUXDEPLOY="$2"; shift 2 ;;
+        --appimagetool) APPIMAGETOOL="$2"; shift 2 ;;
         --help)
             echo "Usage: $(basename "$0") [OPTIONS]"
             echo ""
@@ -30,10 +33,12 @@ while [[ $# -gt 0 ]]; do
             echo "Run build-common.sh first to produce artifacts."
             echo ""
             echo "Options:"
-            echo "  --clean         Clean and rebuild artifacts from scratch, then build the AppImage"
-            echo "  --verbose       Show full command output (default: quiet)"
-            echo "  --no-spinner    Disable spinner animation (plain output)"
-            echo "  --help          Show this help message and exit"
+            echo "  --clean              Clean and rebuild artifacts from scratch, then build the AppImage"
+            echo "  --verbose            Show full command output (default: quiet)"
+            echo "  --no-spinner         Disable spinner animation (plain output)"
+            echo "  --linuxdeploy PATH   Use pre-installed linuxdeploy AppImage at PATH"
+            echo "  --appimagetool PATH  Use pre-installed appimagetool AppImage at PATH"
+            echo "  --help               Show this help message and exit"
             exit 0
             ;;
         *) echo "Unknown option: $1"; echo "Use --help for available options"; exit 1 ;;
@@ -51,62 +56,87 @@ download_tool() {
 
 create_appdir() {
     rm -rf "$APPDIR"
-    mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib"
+    mkdir -p "$APPDIR/app"
 
-    cp "$ARTIFACTS_DIR/app/rhesis" "$APPDIR/usr/"
-    cp -r "$ARTIFACTS_DIR/app/translations" "$APPDIR/usr/" 2>/dev/null || true
-    cp -r "$ARTIFACTS_DIR/app/share" "$APPDIR/usr/"
+    cp -r "$ARTIFACTS_DIR/app/"* "$APPDIR/app/"
 
-    cp -r "$ARTIFACTS_DIR/app/LanguageTool" "$APPDIR/"
-    cp "$ARTIFACTS_DIR/app/lid.176.ftz" "$APPDIR/"
-    cp -r "$ARTIFACTS_DIR/java/jre" "$APPDIR/"
-    cp "$ARTIFACTS_DIR/fastText/fasttext" "$APPDIR/fasttext"
-    ln -sf "../../jre/bin/java" "$APPDIR/usr/bin/java"
+    install -Dm755 "$ARTIFACTS_DIR/fastText/fasttext" "$APPDIR/app/bin/fasttext"
+    install -Dm644 "$ARTIFACTS_DIR/lid.176.ftz" "$APPDIR/app/share/rhesis/lid.176.ftz"
+
+    mkdir -p "$APPDIR/app/share/rhesis"
+    cp -r "$ARTIFACTS_DIR/LanguageTool" "$APPDIR/app/share/rhesis/LanguageTool"
+    cat > "$APPDIR/app/share/rhesis/LanguageTool/server.properties" << EOF
+fasttextModel=../../../share/rhesis/lid.176.ftz
+fasttextBinary=../../../bin/fasttext
+EOF
+
+    ln -sf app/share/applications/io.github.dimkar3000.rhesis.desktop "$APPDIR/"
+    ln -sf app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png "$APPDIR/"
 }
 
 bundle_qt() {
     local qml_src=""
-    for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml; do
-        [ -d "$d" ] && { qml_src="$d"; break; }
-    done
-
-    if [ -n "$qml_src" ]; then
-        mkdir -p "$APPDIR/usr/lib/qt6/qml"
-        for mod in "$qml_src"/Qt* "$qml_src"/Qt6*; do
-            [ -d "$mod" ] && cp -r "$mod" "$APPDIR/usr/lib/qt6/qml/"
+    if command -v qmake6 &>/dev/null; then
+        qml_src=$(qmake6 -query QT_INSTALL_QML 2>/dev/null || true)
+    elif command -v qmake &>/dev/null; then
+        qml_src=$(qmake -query QT_INSTALL_QML 2>/dev/null || true)
+    fi
+    if [ -z "$qml_src" ] || [ ! -d "$qml_src" ]; then
+        qml_src=""
+        for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml \
+                 /usr/lib/qml \
+                 "${SDK:-}/lib/x86_64-linux-gnu/qt6/qml" \
+                 "${SDK:-}/lib/qml"; do
+            [ -d "$d" ] && { qml_src="$d"; break; }
         done
-        cp -r "$qml_src/org" "$APPDIR/usr/lib/qt6/qml/"
     fi
 
-    export QMAKE="$(command -v qmake6 || command -v qmake || true)"
-    "$LINUXDEPLOY" --appdir "$APPDIR" \
-        --executable "$APPDIR/usr/rhesis" \
-        --desktop-file "$APPDIR/usr/share/applications/io.github.dimkar3000.rhesis.desktop" \
-        --icon-file "$APPDIR/usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png" \
-        || true
+    if [ -n "$qml_src" ]; then
+        mkdir -p "$APPDIR/app/lib/qt6/qml"
+        cp -r "$qml_src/"Qt* "$qml_src/org" "$APPDIR/app/lib/qt6/qml/" 2>/dev/null || true
+    fi
 
-    cat > "$APPDIR/usr/qt.conf" << 'EOF'
-[Paths]
-Prefix = .
-Plugins = lib/qt6/plugins
-Qml2Imports = lib/qt6/qml
-EOF
+    export PATH="$TOOLS_DIR:$PATH"
+    export QMAKE="$(command -v qmake6 || command -v qmake || true)"
+    # linuxdeploy's bundled strip doesn't understand modern ELF sections (.relr.dyn)
+    NO_STRIP=1 "$LINUXDEPLOY" --appdir "$APPDIR" \
+        --executable "$APPDIR/app/bin/rhesis" \
+        --desktop-file "$APPDIR/app/share/applications/io.github.dimkar3000.rhesis.desktop" \
+        --icon-file "$APPDIR/app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png"
+
+    # Bundle the JRE last so linuxdeploy doesn't scan its internal
+    # shared objects (e.g. libjvm.so), which it cannot resolve
+    mkdir -p "$APPDIR/app/lib"
+    cp -r "$ARTIFACTS_DIR/java/jre" "$APPDIR/app/lib/"
+    ln -sf ../lib/jre/bin/java "$APPDIR/app/bin/java"
 
     local qt_plugin_dir=""
-    for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins /usr/lib/x86_64-linux-gnu/qt6/plugins; do
-        [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
-    done
+    if command -v qmake6 &>/dev/null; then
+        qt_plugin_dir=$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null || true)
+    elif command -v qmake &>/dev/null; then
+        qt_plugin_dir=$(qmake -query QT_INSTALL_PLUGINS 2>/dev/null || true)
+    fi
+    if [ -z "$qt_plugin_dir" ] || [ ! -d "$qt_plugin_dir" ]; then
+        qt_plugin_dir=""
+        for d in /usr/lib/qt6/plugins /usr/lib64/qt6/plugins \
+                 /usr/lib/x86_64-linux-gnu/qt6/plugins \
+                 /usr/lib/plugins \
+                 "${SDK:-}/lib/x86_64-linux-gnu/qt6/plugins" \
+                 "${SDK:-}/lib/plugins"; do
+            [ -d "$d" ] && { qt_plugin_dir="$d"; break; }
+        done
+    fi
 
     if [ -n "$qt_plugin_dir" ]; then
-        mkdir -p "$APPDIR/usr/lib/qt6/plugins/platforms"
+        mkdir -p "$APPDIR/app/lib/qt6/plugins/platforms"
         for plat in libqxcb.so libqwayland*.so; do
             found=$(find "$qt_plugin_dir/platforms" -maxdepth 1 -name "$plat" -type f 2>/dev/null || true)
-            [ -n "$found" ] && cp "$found" "$APPDIR/usr/lib/qt6/plugins/platforms/" 2>/dev/null
+            [ -n "$found" ] && cp "$found" "$APPDIR/app/lib/qt6/plugins/platforms/" 2>/dev/null
         done
         for subdir in platforminputcontexts platformthemes xcbglintegrations imageformats tls networkinformation wayland-shell-integration; do
             [ -d "$qt_plugin_dir/$subdir" ] && {
-                mkdir -p "$APPDIR/usr/lib/qt6/plugins/$subdir"
-                cp "$qt_plugin_dir/$subdir/"*.so "$APPDIR/usr/lib/qt6/plugins/$subdir/" 2>/dev/null || true
+                mkdir -p "$APPDIR/app/lib/qt6/plugins/$subdir"
+                cp "$qt_plugin_dir/$subdir/"*.so "$APPDIR/app/lib/qt6/plugins/$subdir/" 2>/dev/null || true
             }
         done
     fi
@@ -116,16 +146,24 @@ write_apprun() {
     cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
 HERE=$(dirname "$(readlink -f "$0")")
-export PATH="${HERE}/usr/bin:${PATH}"
+export PATH="${HERE}/app/bin:${PATH}"
+# linuxdeploy keeps bundled system libs in usr/lib; the binary's
+# RPATH ($ORIGIN/../usr/lib) no longer resolves from app/bin
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
-export QT_PLUGIN_PATH="${HERE}/usr/lib/qt6/plugins"
-export QML2_IMPORT_PATH="${HERE}/usr/lib/qt6/qml"
-exec "${HERE}/usr/rhesis" "$@"
+export QT_PLUGIN_PATH="${HERE}/app/lib/qt6/plugins"
+export QML2_IMPORT_PATH="${HERE}/app/lib/qt6/qml"
+export RHESIS_LANGUAGETOOL_DIR="${HERE}/app/share/rhesis/LanguageTool"
+exec "${HERE}/app/bin/rhesis" "$@"
 APPRUN
     chmod +x "$APPDIR/AppRun"
+}
 
-    ln -sf usr/share/applications/io.github.dimkar3000.rhesis.desktop "$APPDIR/"
-    ln -sf usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png "$APPDIR/"
+remove_bundled_system_libs() {
+    local lib_dir="$APPDIR/usr/lib"
+    for lib in libxkbcommon.so.0 libwayland-cursor.so.0 libwayland-server.so.0; do
+        rm -f "$lib_dir/$lib"
+    done
 }
 
 create_appimage() {
@@ -152,8 +190,9 @@ main() {
     download_tool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" "$APPIMAGETOOL"
 
     step "Creating AppDir" create_appdir
-    step "Bundling Qt and KDE dependencies" bundle_qt
     step "Writing AppRun" write_apprun
+    step "Bundling Qt and KDE dependencies" bundle_qt
+    step "Removing incompatible bundled system libraries" remove_bundled_system_libs
     step "Creating AppImage" create_appimage
 
     echo ""

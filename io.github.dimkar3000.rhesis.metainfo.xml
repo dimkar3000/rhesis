@@ -41,6 +41,18 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.3.0" date="2026-07-14">
+      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.3.0</url>
+      <description>
+        <p>Version 0.3.0</p>
+        <ul>
+          <li>add more discribution methods. Now we support Flatpak, Appimage, normal installations</li>
+          <li>impoved build time for local development</li>
+          <li>Updated file discovery path to reflect better on open desktop standards</li>
+          <li>implemented custom colors for suggestion + started on translations</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-07-14">
       <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.2.0</url>
       <description>

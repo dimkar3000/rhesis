@@ -1,4 +1,4 @@
-use cxx_qt_build::{CppFile, CxxQtBuilder, QmlModule};
+use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
     let module = QmlModule::new("io.github.dimkar3000.rhesis");
@@ -11,11 +11,12 @@ fn main() {
         )
         .qt_module("Gui")
         .qt_module("Quick")
-        .cpp_file(CppFile::from("src/interop/cpp/helper.h"))
+        .crate_include_root(Some("src/interop/cpp".to_string()))
         .files(["src/interop/bridge.rs"])
         .qrc("resources.qrc")
         .cc_builder(|a| {
             a.flag_if_supported("-w"); // Disabled warning from qt code base. We cannot fix those.
+            a.debug(false); // Skip -g for generated C++, not match we can do with this either.
         })
         .build();
     }

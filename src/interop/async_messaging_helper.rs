@@ -126,27 +126,35 @@ impl AsyncMessagingHelperRust {
         }
     }
 
-    /// Search for the path to LanguageTool in 3 places.
-    /// - First next to the executable for release artifacts
-    /// - Second inside the ${CWS}/build folder for local dev
-    /// - Third in the CWD for general use
     fn language_tool_dir() -> PathBuf {
-        if let Ok(dir) = std::env::var("RHESIS_LANGUAGETOOL_DIR") {
-            let p = PathBuf::from(dir);
-            if p.is_dir() {
-                return p;
+        let mut path = PathBuf::from("/usr/share/rhesis/LanguageTool");
+        if path.exists() {
+            return path;
+        }
+
+        // Per-user install: $HOME/.local/share/rhesis/LanguageTool
+        if let Some(home) = std::env::var_os("HOME") {
+            let candidate = PathBuf::from(home).join(".local/share/rhesis/LanguageTool");
+            if candidate.is_dir() {
+                return candidate;
             }
         }
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe_dir) = exe.parent() {
-                if let Some(prefix) = exe_dir.parent() {
-                    let flatpak_path = prefix.join("LanguageTool");
-                    if flatpak_path.is_dir() {
-                        return flatpak_path;
-                    }
-                }
+
+        // Flatpak: standard app layout
+        path = PathBuf::from("/app/share/rhesis/LanguageTool");
+        if path.exists() {
+            return path;
+        }
+
+        // AppImage: path relative to $APPDIR
+        if let Ok(appdir) = std::env::var("APPDIR") {
+            let candidate = PathBuf::from(format!("{appdir}/app/share/rhesis/LanguageTool"));
+            if candidate.exists() {
+                return candidate;
             }
         }
+
+        // Fallback folders for local development
         let build_path = PathBuf::from("./build/LanguageTool");
         if build_path.is_dir() {
             return build_path;
@@ -156,8 +164,7 @@ impl AsyncMessagingHelperRust {
 
     fn setup_child(&mut self, port: String) {
         let lt_dir = Self::language_tool_dir();
-        let java_path = std::env::var("PATH").unwrap_or_default();
-        log::info!("LanguageTool dir: {:?}, PATH: {}", lt_dir, java_path);
+        log::info!("LanguageTool dir: {:?}", lt_dir);
 
         let result = Command::new("java")
             .args([

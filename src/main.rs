@@ -3,7 +3,10 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, Q
 use cxx_qt_lib_extras::QApplication;
 use lazy_static::lazy_static;
 
-use std::env;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use crate::interop::bridge;
 
@@ -21,8 +24,6 @@ lazy_static! {
 
 #[tokio::main()]
 async fn main() {
-    log::info!("Starting LanguageTool");
-
     run_ui();
 }
 
@@ -39,14 +40,14 @@ fn run_ui() {
 
     bridge::ffi::setupIconTheme();
 
-    let translations_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join("translations")))
-        .filter(|p| p.is_dir())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| format!("{}/translations", env!("CARGO_MANIFEST_DIR")));
+    let translations_dir = find_translations_dir();
+    log::info!("using translations directory: {:?}", translations_dir);
+
     if let Some(mut app) = app.as_mut() {
-        bridge::ffi::installTranslation(app.as_mut(), &QString::from(&translations_dir));
+        if let Some(dir) = translations_dir {
+            let dir = dir.to_string_lossy().to_string();
+            bridge::ffi::installTranslation(app.as_mut(), &QString::from(&dir));
+        }
     }
 
     let mut engine = QQmlApplicationEngine::new();
@@ -69,4 +70,53 @@ fn run_ui() {
         bridge::ffi::appSetWindowIcon(app.as_mut(), &LOGO_PATH);
         app.exec();
     }
+}
+
+fn find_translations_dir_with_prefix(prefix: &str) -> Option<PathBuf> {
+    let candidate = Path::new(&format!("{prefix}/rhesis/translations")).to_path_buf();
+    log::debug!("Looking for translations in: {candidate:?}");
+    if candidate.exists() {
+        log::info!("Found translations: {candidate:?}");
+
+        return Some(candidate);
+    }
+
+    None
+}
+fn find_translations_dir() -> Option<PathBuf> {
+    use std::path::Path;
+
+    if let Some(path) = find_translations_dir_with_prefix("/usr/share") {
+        return Some(path);
+    }
+
+    // Per-user install: $HOME/.local/share/rhesis/translations
+    if let Ok(home) = env::var("HOME") {
+        if let Some(candidate) = find_translations_dir_with_prefix(&format!("{home}/.local/share")) {
+            return Some(candidate);
+        }
+    }
+
+    // AppImage: path relative to $APPDIR
+    if let Ok(appdir) = env::var("APPDIR") {
+        if let Some(candidate) = find_translations_dir_with_prefix(&format!("{appdir}/app/share")) {
+            return Some(candidate);
+        }
+    }
+    
+    // Flatpak: the files are installed in /app
+    if let Some(path) = find_translations_dir_with_prefix("/app/share") {
+        return Some(path);
+    }
+
+    // Current working directory (dev fallback)
+    let candidate = Path::new("./translations");
+    if candidate.is_dir() {
+        log::info!("Found translations in CWD");
+        return Some(candidate.to_path_buf());
+    }
+
+    log::error!("Failed to find translations directory.");
+
+    None
 }

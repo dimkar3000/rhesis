@@ -11,6 +11,59 @@ LanguageTool server (Java, runs on a trimmed JRE inside the flatpak).
 LanguageTool uses a bundled fastText binary + model for language
 identification.
 
+## Installation
+
+All three flavors are built automatically and attached to every
+[release](https://github.com/dimkar3000/rhesis/releases).
+
+### Option 1: Flatpak
+
+Sandboxed, bundles everything, integrates with your software center.
+
+```sh
+# download the latest release
+wget https://github.com/dimkar3000/rhesis/releases/latest/download/rhesis.flatpak
+
+# install (drop --user for a system-wide install)
+flatpak install --user rhesis.flatpak
+
+# run
+flatpak run io.github.dimkar3000.rhesis
+```
+
+### Option 2: AppImage
+
+Single file, no installation required. Download
+`rhesis-<version>-x86_64.AppImage` from the releases page, then:
+
+```sh
+chmod +x rhesis-<version>-x86_64.AppImage
+./rhesis-<version>-x86_64.AppImage
+```
+
+### Option 3: Native install (desktop tarball + runner.sh)
+
+Installs a launcher, desktop entry, bundled JRE and LanguageTool to `/usr`
+(global) or `~/.local` (per-user). `runner.sh` automatically downloads the
+matching tarball from the latest release; if you placed a
+`rhesis-<version>-x86_64[-local].tar.gz` in the current directory, it is
+used instead.
+
+```sh
+# download the installer
+wget https://github.com/dimkar3000/rhesis/releases/latest/download/runner.sh
+chmod +x runner.sh
+
+# system-wide install (writes to /, requires root)
+sudo ./runner.sh --install
+
+# or per-user install (no root required)
+./runner.sh --install local
+```
+
+Uninstall with `sudo rhesis --uninstall` for global installations or `rhesis --uninstall`
+for a per-user install.
+
 ## Completed/Pending Features
 - [x] Basic suggestions features 
 - [x] Flatpak distribution
