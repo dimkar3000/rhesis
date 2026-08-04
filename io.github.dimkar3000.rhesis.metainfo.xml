@@ -49,7 +49,6 @@
           <li>add more discribution methods. Now we support Flatpak, Appimage, normal installations</li>
           <li>impoved build time for local development</li>
           <li>Updated file discovery path to reflect better on open desktop standards</li>
-          <li>implemented custom colors for suggestion + started on translations</li>
         </ul>
       </description>
     </release>

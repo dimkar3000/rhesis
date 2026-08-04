@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0]
+
+- add more discribution methods. Now we support Flatpak, Appimage, normal installations
+- impoved build time for local development
+- Updated file discovery path to reflect better on open desktop standards
+
 ## [0.2.0]
 - small fixes
 - implemented custom colors for suggestion + started on translations
