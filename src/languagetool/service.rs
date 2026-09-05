@@ -184,24 +184,30 @@ enum VerifyOutcome {
 
 impl LanguageToolWorker {
     /// Spawn the worker in a standalone thread and return handles to talk with it.
-    pub fn start(self) -> WorkerHandles {
+    pub fn start(self) -> Option<WorkerHandles> {
         let event_sender = self.event_sender.clone();
         let message_receiver = self.message_receiver.clone();
 
         let running = Arc::new(AtomicBool::new(true));
 
         let thread_running = running.clone();
-        let thread = std::thread::Builder::new()
+        let thread = match std::thread::Builder::new()
             .name("languagetool-worker".to_string())
             .spawn(move || self.run_loop(thread_running))
-            .unwrap();
+        {
+            Ok(thread) => thread,
+            Err(e) => {
+                log::error!("failed to spawn LanguageTool worker thread: {e:?}");
+                return None;
+            }
+        };
 
-        WorkerHandles {
+        Some(WorkerHandles {
             event_sender,
             message_receiver,
             running,
             thread,
-        }
+        })
     }
 
     /// Blocking event loop, runs on the worker's standalone thread and fully
@@ -421,26 +427,22 @@ impl LanguageToolWorker {
                 self.emit_status(WorkerStatus::Stopped);
                 Outcome::Continue
             }
-            LanguageToolWorkerEvent::Start => {
-                match self.status.clone() {
-                    WorkerStatus::Started | WorkerStatus::Starting => {
-                        log::debug!("Start ignored, already {:?}", self.status);
-                        Outcome::Continue
-                    }
-                    WorkerStatus::Failed(reason) => {
-                        log::warn!(
-                            "Start ignored while Failed({reason}); use Retry/Stop/SetPort"
-                        );
-                        Outcome::Continue
-                    }
-                    WorkerStatus::Stopped => {
-                        self.use_local_server = true;
-                        self.start_local_server(client, runtime);
-                        *last_text = QString::default();
-                        Outcome::Continue
-                    }
+            LanguageToolWorkerEvent::Start => match self.status.clone() {
+                WorkerStatus::Started | WorkerStatus::Starting => {
+                    log::debug!("Start ignored, already {:?}", self.status);
+                    Outcome::Continue
                 }
-            }
+                WorkerStatus::Failed(reason) => {
+                    log::warn!("Start ignored while Failed({reason}); use Retry/Stop/SetPort");
+                    Outcome::Continue
+                }
+                WorkerStatus::Stopped => {
+                    self.use_local_server = true;
+                    self.start_local_server(client, runtime);
+                    *last_text = QString::default();
+                    Outcome::Continue
+                }
+            },
             LanguageToolWorkerEvent::Stop => {
                 log::info!("stopping the local LanguageTool server");
                 self.use_local_server = false;
@@ -478,24 +480,22 @@ impl LanguageToolWorker {
                 }
                 Outcome::Continue
             }
-            LanguageToolWorkerEvent::Retry => {
-                match self.status.clone() {
-                    WorkerStatus::Started | WorkerStatus::Starting => {
-                        log::debug!("Retry ignored, already {:?}", self.status);
-                        Outcome::Continue
-                    }
-                    WorkerStatus::Stopped | WorkerStatus::Failed(_) => {
-                        log::info!("Retrying LanguageTool server on port {}", self.port);
-                        self.consecutive_failures = 0;
-                        self.use_local_server = true;
-                        self.host = "localhost".to_string();
-                        client.update_address(&self.host, self.port);
-                        self.start_local_server(client, runtime);
-                        *last_text = QString::default();
-                        Outcome::Continue
-                    }
+            LanguageToolWorkerEvent::Retry => match self.status.clone() {
+                WorkerStatus::Started | WorkerStatus::Starting => {
+                    log::debug!("Retry ignored, already {:?}", self.status);
+                    Outcome::Continue
                 }
-            }
+                WorkerStatus::Stopped | WorkerStatus::Failed(_) => {
+                    log::info!("Retrying LanguageTool server on port {}", self.port);
+                    self.consecutive_failures = 0;
+                    self.use_local_server = true;
+                    self.host = "localhost".to_string();
+                    client.update_address(&self.host, self.port);
+                    self.start_local_server(client, runtime);
+                    *last_text = QString::default();
+                    Outcome::Continue
+                }
+            },
         }
     }
 
@@ -600,17 +600,14 @@ impl LanguageToolWorker {
                             | LanguageToolWorkerEvent::Retry
                             | LanguageToolWorkerEvent::ChangeAddress(_, _)
                     );
-                    // Use a dummy last_text; callers reset it on success.
-                    let mut dummy = QString::default();
-                    let outcome =
-                        self.process_event(event, client, runtime, &mut dummy);
+
+                    let mut empty_string = QString::default();
+                    let outcome = self.process_event(event, client, runtime, &mut empty_string);
                     if matches!(outcome, Outcome::Stop) {
                         let _ = self.event_sender.send(LanguageToolWorkerEvent::Kill);
                         return;
                     }
-                    if needs_restart
-                        && matches!(self.status, WorkerStatus::Starting)
-                    {
+                    if needs_restart && matches!(self.status, WorkerStatus::Starting) {
                         // process_event already started a nested attempt which
                         // settled; do not loop again.
                         return;
@@ -688,7 +685,9 @@ impl LanguageToolWorker {
 
         // AppImage: path relative to $APPDIR
         if let Ok(appdir) = std::env::var("APPDIR") {
-            candidates.push(PathBuf::from(format!("{appdir}/app/share/rhesis/LanguageTool")));
+            candidates.push(PathBuf::from(format!(
+                "{appdir}/app/share/rhesis/LanguageTool"
+            )));
         }
 
         // Local development: setup.sh output, then build-common.sh artifacts
@@ -860,10 +859,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "rhesis-lt-test-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("rhesis-lt-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

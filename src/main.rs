@@ -44,10 +44,7 @@ fn run_ui() {
         if !preferred.is_empty() {
             log::info!("using persisted language override: {preferred}");
         }
-        if !bridge::ffi::applyLanguage(
-            &QString::from(&dir),
-            &QString::from(&preferred),
-        ) {
+        if !bridge::ffi::applyLanguage(&QString::from(&dir), &QString::from(&preferred)) {
             log::warn!("failed to install translations from {dir}");
         }
     }

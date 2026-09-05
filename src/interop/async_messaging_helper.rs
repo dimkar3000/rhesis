@@ -4,6 +4,7 @@ use std::{
         Arc,
     },
     thread::JoinHandle,
+    time::Duration,
 };
 
 use crossbeam::channel::{Receiver, Sender};
@@ -73,7 +74,35 @@ impl AsyncMessagingHelperRust {
 
         log::info!("Starting LanguageTool worker thread");
 
-        let handles = LanguageToolWorker::default().start();
+        // Thread spawn can fail transiently under resource pressure, so retry
+        // a few times with a short pause in between. Without the worker there
+        // is no grammar checking at all, so an exhausted budget aborts loudly.
+        const SPAWN_ATTEMPTS: u32 = 3;
+        const SPAWN_RETRY_DELAY: Duration = Duration::from_millis(200);
+        let mut attempt = 0;
+        let handles = loop {
+            attempt += 1;
+            match LanguageToolWorker::default().start() {
+                Some(handles) => break handles,
+                None if attempt < SPAWN_ATTEMPTS => {
+                    log::warn!(
+                        "worker thread spawn attempt {attempt}/{SPAWN_ATTEMPTS} failed, \
+                         retrying in {SPAWN_RETRY_DELAY:?}"
+                    );
+                    std::thread::sleep(SPAWN_RETRY_DELAY);
+                }
+                None => {
+                    log::error!(
+                        "failed to spawn LanguageTool worker thread \
+                         after {SPAWN_ATTEMPTS} attempts"
+                    );
+                    panic!(
+                        "failed to spawn LanguageTool worker thread \
+                         after {SPAWN_ATTEMPTS} attempts"
+                    );
+                }
+            }
+        };
 
         self.event_sender = Some(handles.event_sender);
         self.message_receiver = Some(handles.message_receiver);

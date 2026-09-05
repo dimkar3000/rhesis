@@ -60,14 +60,35 @@ fn find_translations_dir_with_prefix(prefix: &str) -> Option<PathBuf> {
 /// Reads the same QSettings INI file the QML side writes, so there is a
 /// single source of truth and no extra dependency.
 pub fn persisted_language() -> String {
-    let config_home = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-        env::var("HOME").map(|home| format!("{home}/.config")).unwrap_or_default()
-    });
-    if config_home.is_empty() {
-        return String::new();
-    }
+    let config_home = match env::var("XDG_CONFIG_HOME") {
+        Ok(dir) => dir,
+        Err(_) => match env::var("HOME") {
+            Ok(home) => format!("{home}/.config"),
+            Err(e) => {
+                log::error!(
+                    "neither XDG_CONFIG_HOME nor HOME is set ({e:?}); \
+                     cannot read persisted language, falling back to system locale"
+                );
+                return String::new();
+            }
+        },
+    };
     let ini_path = Path::new(&config_home).join("rhesis/Rhesis.conf");
-    let contents = std::fs::read_to_string(&ini_path).unwrap_or_default();
+    let contents = match std::fs::read_to_string(&ini_path) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First run: the QML Settings store has not persisted anything yet.
+            log::debug!("no persisted settings at {ini_path:?}, using system locale");
+            return String::new();
+        }
+        Err(e) => {
+            log::error!(
+                "failed to read persisted settings at {ini_path:?}: {e:?}; \
+                 falling back to system locale"
+            );
+            return String::new();
+        }
+    };
 
     // Minimal INI scan: `language=<code>` inside [General] (or before any
     // section header, which QSettings also treats as General).

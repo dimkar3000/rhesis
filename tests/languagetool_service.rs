@@ -61,12 +61,14 @@ fn start_worker() -> WorkerHandles {
     LanguageToolWorker::default()
         .with_startup_timeout(Duration::from_secs(2))
         .start()
+        .expect("worker thread must spawn in tests")
 }
 
 fn start_worker_with_timeout(timeout: Duration) -> WorkerHandles {
     LanguageToolWorker::default()
         .with_startup_timeout(timeout)
         .start()
+        .expect("worker thread must spawn in tests")
 }
 
 /// Drain status messages until `predicate` matches, or timeout.
@@ -152,9 +154,7 @@ fn spawn_mock_server() -> (u16, thread::JoinHandle<()>) {
 }
 
 fn kill(handles: &WorkerHandles) {
-    let _ = handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::Kill);
+    let _ = handles.event_sender.send(LanguageToolWorkerEvent::Kill);
 }
 
 #[test]
@@ -185,14 +185,12 @@ fn worker_starts_running_and_kill_stops_it() {
 fn boots_in_stopped_and_drops_suggestions_until_started() {
     let handles = start_worker();
 
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Stopped),
-            Duration::from_secs(5)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Stopped),
+        Duration::from_secs(5)
+    )
+    .is_some());
 
     // Suggestions are dropped while Stopped: no Suggestion message.
     handles
@@ -258,14 +256,12 @@ fn repeated_text_is_deduplicated() {
             port,
         ))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     // Same text twice: only the first one should produce an event.
     let text = QString::from("some text to check");
@@ -302,14 +298,12 @@ fn suggestions_flow_against_mock_server() {
             port,
         ))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     handles
         .event_sender
@@ -359,14 +353,12 @@ fn stop_event_reports_stopped() {
             port,
         ))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     handles
         .event_sender
@@ -389,8 +381,7 @@ fn stop_event_reports_stopped() {
 fn start_failures_latch_to_failed_after_three() {
     // Occupy a port so the embedded server can never bind it: every Start
     // attempt fails fast (early exit) instead of waiting out the timeout.
-    let _occupant =
-        TcpListener::bind(("127.0.0.1", 0)).expect("bind occupant for failure test");
+    let _occupant = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupant for failure test");
     let bad_port = _occupant.local_addr().unwrap().port();
     let handles = start_worker_with_timeout(Duration::from_secs(2));
 
@@ -407,14 +398,12 @@ fn start_failures_latch_to_failed_after_three() {
         .event_sender
         .send(LanguageToolWorkerEvent::SetPort(bad_port))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Stopped),
-            Duration::from_secs(5)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Stopped),
+        Duration::from_secs(5)
+    )
+    .is_some());
 
     for attempt in 1..=MAX_START_FAILURES {
         handles
@@ -488,14 +477,12 @@ fn setport_while_started_restarts() {
             port_a,
         ))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     // Point the client at the second mock; suggestions must keep flowing.
     handles
@@ -505,14 +492,12 @@ fn setport_while_started_restarts() {
             port_b,
         ))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     handles
         .event_sender
@@ -535,7 +520,9 @@ fn embedded_server_delivers_recommendations() {
     }
 
     let port = 26890;
-    let handles = LanguageToolWorker::default().start();
+    let handles = LanguageToolWorker::default()
+        .start()
+        .expect("worker thread must spawn in tests");
 
     handles
         .event_sender
@@ -588,21 +575,21 @@ fn restarting_local_server_respawns_it() {
     }
 
     let port = 26891;
-    let handles = LanguageToolWorker::default().start();
+    let handles = LanguageToolWorker::default()
+        .start()
+        .expect("worker thread must spawn in tests");
 
     handles
         .event_sender
         .send(LanguageToolWorkerEvent::RestartLocalServer(port))
         .unwrap();
     assert!(wait_for_server(port, Duration::from_secs(60)));
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(60)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(60)
+    )
+    .is_some());
 
     // A second restart must be harmless (old process killed, new one started)
     handles
@@ -610,14 +597,12 @@ fn restarting_local_server_respawns_it() {
         .send(LanguageToolWorkerEvent::RestartLocalServer(port))
         .unwrap();
     assert!(wait_for_server(port, Duration::from_secs(60)));
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(60)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(60)
+    )
+    .is_some());
 
     kill(&handles);
     assert!(wait_for(

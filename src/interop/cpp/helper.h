@@ -33,8 +33,10 @@ inline std::unique_ptr<QTextCharFormat> newUnderlinedFormat(const QString& color
     return fmt;
 }
 
-inline void replaceTextInDocument(QTextDocument* doc, int64_t start, int64_t end, const QString& replacement) {
-    QTextCursor cursor(doc);
+// Takes a reference (not a pointer) so the Rust bridge declaration stays a
+// safe function: the raw pointer is validated once at the call site.
+inline void replaceTextInDocument(QTextDocument& doc, int64_t start, int64_t end, const QString& replacement) {
+    QTextCursor cursor(&doc);
     cursor.setPosition(start);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
     cursor.insertText(replacement);

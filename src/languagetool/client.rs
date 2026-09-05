@@ -42,7 +42,11 @@ impl LanguageToolClient {
             Err(_) => return false,
         };
 
-        let form_data = [("text", "ok"), ("language", "en-US"), ("enabledOnly", "false")];
+        let form_data = [
+            ("text", "ok"),
+            ("language", "en-US"),
+            ("enabledOnly", "false"),
+        ];
 
         match client
             .post(format!("{}/v2/check", self.address))

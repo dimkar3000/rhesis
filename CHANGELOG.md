@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.4.0] - 2026-09-05
+
+- feat: formating + clippy + safety comments
 - fix: releases file generator in CI
 - feat: introduce language switching in settings
 - fix: fix translation missmatch in flatpak

@@ -48,8 +48,11 @@ pub mod ffi {
         type QTextCharFormat;
         fn newUnderlinedFormat(colorName: &QString) -> UniquePtr<QTextCharFormat>;
 
-        unsafe fn replaceTextInDocument(
-            doc: *mut QTextDocument,
+        /// Replace the text range inside a document with new content.
+        /// Takes a pinned reference (not a raw pointer) so this stays a safe
+        /// function; callers validate the pointer once when pinning it.
+        fn replaceTextInDocument(
+            doc: Pin<&mut QTextDocument>,
             start: i64,
             end: i64,
             replacement: &QString,
@@ -274,11 +277,13 @@ impl ffi::CustomHighlighter {
     pub fn replace_word(mut self: Pin<&mut Self>, start: i64, end: i64, replacement: &QString) {
         log::debug!("replacing word at [{start}, {end}] with {replacement:?}");
         self.as_mut().rust_mut().recommendations.clear();
-        unsafe {
-            let doc = self.document();
-            if !doc.is_null() {
-                ffi::replaceTextInDocument(doc, start, end, replacement);
-            }
+        // SAFETY: `document()` returns this highlighter's own live QTextDocument
+        // (or null when detached). The null check plus Qt's object lifetime
+        // guarantee make pinning sound here, on the GUI thread.
+        let doc = unsafe { self.document() };
+        if !doc.is_null() {
+            let pinned = unsafe { Pin::new_unchecked(&mut *doc) };
+            ffi::replaceTextInDocument(pinned, start, end, replacement);
         }
     }
 
@@ -293,12 +298,28 @@ impl ffi::CustomHighlighter {
         QList_i32::default()
     }
 
-    pub fn set_text_document(self: Pin<&mut Self>, doc: *mut ffi::QQuickTextDocument) {
+    /// Attach the QML text document to the highlighter.
+    ///
+    /// # Safety
+    ///
+    /// `doc` must be a valid, non-null pointer to a live `QQuickTextDocument`.
+    /// Must be called on the Qt GUI thread owning the document.
+    pub unsafe fn set_text_document(self: Pin<&mut Self>, doc: *mut ffi::QQuickTextDocument) {
         let text_doc = unsafe { (*doc).textDocument() };
         unsafe { self.set_document(text_doc) };
     }
 
-    pub fn start_message_thread(self: Pin<&mut Self>, helper: *mut ffi::AsyncMessagingHelper) {
+    /// Wire the highlighter to the messaging helper's threads.
+    ///
+    /// # Safety
+    ///
+    /// `helper` must be a valid, non-null pointer to a live
+    /// `AsyncMessagingHelper` for the duration of this call. Must be called
+    /// on the Qt thread that owns both objects.
+    pub unsafe fn start_message_thread(
+        self: Pin<&mut Self>,
+        helper: *mut ffi::AsyncMessagingHelper,
+    ) {
         let helper_pin = unsafe { Pin::new_unchecked(&mut *helper) };
         let helper_thread = helper_pin.qt_thread();
         let helper_rust = helper_pin.rust_mut();

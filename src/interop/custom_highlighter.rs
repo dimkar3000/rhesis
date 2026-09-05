@@ -88,9 +88,7 @@ impl CustomHighlighterRust {
                     }) {
                         Ok(_) => (),
                         Err(e) => {
-                            log::error!(
-                                "error queuing status to the UI thread, stopping: {e:?}"
-                            );
+                            log::error!("error queuing status to the UI thread, stopping: {e:?}");
                             break;
                         }
                     };
