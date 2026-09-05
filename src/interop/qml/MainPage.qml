@@ -102,6 +102,8 @@ Kirigami.Page {
 
                 let tooltip = suggestions[i].tooltip;
                 if (settings.showDebugTooltips) {
+                    // Imperative: refreshes on every rebuild (each keystroke),
+                    // so a language switch applies here without extra handling.
                     tooltip = `[${suggestions[i].language}] ${suggestions[i].tooltip}\n\n${qsTr("more_info_tooltip")} ${qsTr("rule_id_label")} ${suggestions[i].rule_id}\n${qsTr("category_id_label")} ${suggestions[i].category_id}`;
                 }
                 menuModel.append({

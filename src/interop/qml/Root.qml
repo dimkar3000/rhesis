@@ -27,6 +27,8 @@ Kirigami.ApplicationWindow {
         property string defaultPort: "2689"
         property bool showTooltips: true
         property bool showDebugTooltips: true
+        // Locale code (e.g. "el_GR"); empty means system locale.
+        property string language: ""
         property var colorSettings: ({
                 "CATEGORY:GRAMMAR": "#ecc224",
                 "CATEGORY:TYPOGRAPHY": "#f63ef9",
@@ -42,7 +44,12 @@ Kirigami.ApplicationWindow {
         SettingsPage {
             settings: appSettings
             helper: messagingHelper
+            langManager: languageManager
         }
+    }
+
+    LanguageManager {
+        id: languageManager
     }
 
     CustomHighlighter {

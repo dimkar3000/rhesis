@@ -180,5 +180,20 @@
         <source>add_filter_button</source>
         <translation>Add Filter</translation>
     </message>
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="214"/>
+        <source>language_section</source>
+        <translation>Language</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="219"/>
+        <source>language_label</source>
+        <translation>Interface language</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="223"/>
+        <source>system_default_label</source>
+        <translation>System default</translation>
+    </message>
 </context>
 </TS>

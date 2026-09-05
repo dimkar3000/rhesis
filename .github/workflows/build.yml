@@ -18,6 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Allow git in container workspace
+        # The KDE SDK container runs as a different UID than the checkout
+        # owner, so git refuses to work ("dubious ownership") unless told
+        # the workspace is safe. generate-metainfo.py degrades gracefully
+        # without git, but real tag dates need it.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Check version consistency (final releases only)
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
         run: ./scripts/check-versions.sh

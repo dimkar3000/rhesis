@@ -59,7 +59,9 @@ pub mod ffi {
 
         fn setupIconTheme();
 
-        fn installTranslation(app: Pin<&mut QApplication>, translationsDir: &QString) -> bool;
+        fn applyLanguage(dir: &QString, preferredLocale: &QString) -> bool;
+
+        fn retranslateForObject(object: Pin<&mut LanguageManager>);
     }
 
     unsafe extern "C++" {
@@ -100,6 +102,15 @@ pub mod ffi {
         #[qinvokable]
         fn update_colors(self: Pin<&mut AsyncMessagingHelper>, colors: QMap_QString_QVariant);
 
+    }
+
+    extern "RustQt" {
+        #[qobject]
+        #[qml_element]
+        type LanguageManager = super::LanguageManagerRust;
+
+        #[qinvokable]
+        fn apply_language(self: Pin<&mut LanguageManager>, code: &QString) -> bool;
     }
 
     impl cxx_qt::Threading for AsyncMessagingHelper {}
@@ -230,6 +241,17 @@ impl ffi::AsyncMessagingHelper {
     }
 }
 
+impl ffi::LanguageManager {
+    fn apply_language(mut self: Pin<&mut Self>, code: &QString) -> bool {
+        let dir = QString::from(self.as_mut().rust_mut().translations_dir.as_str());
+        if !ffi::applyLanguage(&dir, code) {
+            return false;
+        }
+        ffi::retranslateForObject(self);
+        true
+    }
+}
+
 impl ffi::CustomHighlighter {
     pub fn highlight_block(mut self: Pin<&mut Self>, _text: &QString) {
         let ranges = self.as_mut().rust_mut().highlight_block();
@@ -289,3 +311,4 @@ impl ffi::CustomHighlighter {
 pub(super) type AsyncMessagingHelperRust =
     crate::interop::async_messaging_helper::AsyncMessagingHelperRust;
 pub(super) type CustomHighlighterRust = crate::interop::custom_highlighter::CustomHighlighterRust;
+pub(super) type LanguageManagerRust = crate::interop::language::LanguageManagerRust;

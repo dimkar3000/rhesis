@@ -159,13 +159,22 @@ def main():
         tag = tag[len("refs/tags/"):]
 
     commit = git(["rev-parse", "HEAD"], args.repo)
-    tag_commit = git(["rev-parse", f"{tag}^{{commit}}"], args.repo) if tag else None
-    if tag and not tag_commit:
+    git_ok = commit is not None
+    if not git_ok:
+        warn(f"git repository at {args.repo} is not readable "
+             "(missing git, dubious ownership, or no .git?); "
+             "release dates fall back to CHANGELOG/metainfo data, "
+             "no pre-release detection from tags")
+    tag_commit = git(["rev-parse", f"{tag}^{{commit}}"], args.repo) if (tag and git_ok) else None
+    if tag and git_ok and not tag_commit:
         # Branch names (workflow_dispatch) and unknown refs land here: ignore.
         tag = None
     resolve_commit = tag_commit or commit
-    tags_at = git(["tag", "--points-at", resolve_commit], args.repo)
-    tags_at = tags_at.splitlines() if tags_at else []
+    if resolve_commit is None:
+        tags_at = []
+    else:
+        tags_at = git(["tag", "--points-at", resolve_commit], args.repo)
+        tags_at = tags_at.splitlines() if tags_at else []
 
     final_at_commit = sorted(
         {m.group(1) for t in tags_at if (m := FINAL_TAG_RE.match(t))}
@@ -229,7 +238,7 @@ def main():
                 f"v{prerelease_version}",
             )
             pre_date = git(["log", "-1", "--format=%cs", pre_tag], args.repo)
-            if not (pre_date and DATE_RE.match(pre_date)):
+            if not (pre_date and DATE_RE.match(pre_date)) and resolve_commit is not None:
                 pre_date = git(["log", "-1", "--format=%cs", resolve_commit],
                                args.repo)
             if not (pre_date and DATE_RE.match(pre_date)):

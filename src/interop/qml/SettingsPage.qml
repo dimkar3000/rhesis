@@ -12,10 +12,12 @@ Kirigami.Page {
 
     property var settings
     property AsyncMessagingHelper helper
+    property LanguageManager langManager
     property bool localEmbedded: false
     property bool localTooltipSwitch: false
     property bool localDebugTooltipSwitch: false
     property string localPort: ""
+    property string localLanguage: ""
     property bool shouldRestartServer: localEmbedded !== settings.embedded || localPort !== settings.port
 
     ListModel {
@@ -27,7 +29,21 @@ Kirigami.Page {
         localPort = settings.port;
         localTooltipSwitch = settings.showTooltips;
         localDebugTooltipSwitch = settings.showDebugTooltips;
+        localLanguage = settings.language;
         loadColorRules();
+    }
+
+    // Display name in the language itself ("Ελληνικά (Ελλάδα)"). Stable
+    // across UI languages, so it is safe to call from a binding. The
+    // "system default" entry uses qsTr() directly in the model instead.
+    function localeLabel(code) {
+        var loc = Qt.locale(code);
+        var name = loc.nativeLanguageName;
+        if (name === "") {
+            return code;
+        }
+        var territory = loc.nativeTerritoryName;
+        return territory === "" ? name : `${name} (${territory})`;
     }
 
     function loadColorRules() {
@@ -112,6 +128,10 @@ Kirigami.Page {
             return true;
         }
 
+        if (localLanguage !== settings.language) {
+            return true;
+        }
+
         if (colorRulesChanged()) {
             return true;
         }
@@ -160,6 +180,15 @@ Kirigami.Page {
 
                 settings.showDebugTooltips = localDebugTooltipSwitch && localTooltipSwitch;
 
+                if (localLanguage !== settings.language) {
+                    if (langManager.apply_language(localLanguage)) {
+                        settings.language = localLanguage;
+                    } else {
+                        console.warn(`failed to switch language to "${localLanguage}", keeping "${settings.language}"`);
+                        localLanguage = settings.language;
+                    }
+                }
+
                 settings.colorSettings = collectColorRules();
                 helper.update_colors(settings.colorSettings);
 
@@ -179,6 +208,28 @@ Kirigami.Page {
             id: formLayout
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
+
+            Kirigami.Separator {
+                Kirigami.FormData.isSection: true
+                Kirigami.FormData.label: qsTr("language_section")
+            }
+
+            Controls.ComboBox {
+                id: languageCombo
+                Kirigami.FormData.label: qsTr("language_label")
+                textRole: "label"
+                valueRole: "code"
+                model: [
+                    { code: "", label: qsTr("system_default_label") },
+                    { code: "en_US", label: localeLabel("en_US") },
+                    { code: "el_GR", label: localeLabel("el_GR") }
+                ]
+                currentIndex: {
+                    const i = indexOfValue(localLanguage);
+                    return i >= 0 ? i : 0;
+                }
+                onActivated: localLanguage = currentValue
+            }
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true

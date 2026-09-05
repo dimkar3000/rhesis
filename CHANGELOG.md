@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.4.0]
 
+- feat: introduce language switching in settings
 - fix: fix translation missmatch in flatpak
 - LanguageTool proper managment and status indicator in UI
 

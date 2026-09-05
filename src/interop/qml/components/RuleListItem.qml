@@ -19,11 +19,15 @@ RowLayout {
     signal colorChanged(string newColor)
     signal removeRequested
 
+    // The model carries values only; labels use qsTr() directly inside the
+    // bindings below so they follow language switches. (retranslate() only
+    // re-evaluates bindings that textually contain qsTr(): not
+    // Component.onCompleted, not JS helper functions.)
     ListModel {
         id: ruleTypesModel
         Component.onCompleted: {
-            ruleTypesModel.append({ value: "CATEGORY", text: qsTr("rule_type_category") });
-            ruleTypesModel.append({ value: "RULE", text: qsTr("rule_type_rule") });
+            ruleTypesModel.append({ value: "CATEGORY" });
+            ruleTypesModel.append({ value: "RULE" });
         }
     }
 
@@ -31,7 +35,15 @@ RowLayout {
         id: ruleTypeCombo
         Layout.preferredWidth: 120
         model: ruleTypesModel
-        textRole: "text"
+        textRole: "value"
+        displayText: currentValue === "CATEGORY" ? qsTr("rule_type_category") : qsTr("rule_type_rule")
+        delegate: Controls.ItemDelegate {
+            required property string value
+            required property int index
+            width: ruleTypeCombo.width
+            text: value === "CATEGORY" ? qsTr("rule_type_category") : qsTr("rule_type_rule")
+            highlighted: ruleTypeCombo.highlightedIndex === index
+        }
         currentIndex: {
             for (let i = 0; i < ruleTypesModel.count; i++) {
                 if (ruleTypesModel.get(i).value === root.ruleType)

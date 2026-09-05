@@ -1,6 +1,6 @@
 use std::{
-    io::{BufRead, BufReader},
-    path::PathBuf,
+    io::{BufRead, BufReader, Read},
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -714,6 +714,17 @@ impl LanguageToolWorker {
         };
         log::info!("LanguageTool dir: {:?}", lt_dir);
 
+        // Fail fast with an actionable reason instead of burning the full
+        // readiness timeout when something else already owns the port
+        // (stale server, second app instance, ...).
+        if let Err(e) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            return Err(format!(
+                "port {port} is already in use ({e}); stop the process holding it first"
+            ));
+        }
+
+        Self::ensure_server_properties(&lt_dir);
+
         let result = Command::new("java")
             .args([
                 "-cp",
@@ -736,6 +747,27 @@ impl LanguageToolWorker {
                 return Err(format!("failed to spawn LanguageTool: {e:?}"));
             }
         };
+
+        // Fail fast when java exits during startup (bad config, missing jar,
+        // lost port race, ...), capturing its stderr so the failure reason
+        // is actionable instead of a bare exit status. Piped output stays
+        // unread only briefly; JVM startup chatter never fills the pipe.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let detail = Self::read_child_stderr(&mut child);
+                    return Err(format!("LanguageTool exited early ({status}): {detail}"));
+                }
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(e) => return Err(format!("failed to poll LanguageTool process: {e:?}")),
+            }
+        }
 
         if let Some(out) = child.stdout.take() {
             std::thread::spawn(move || {
@@ -760,16 +792,151 @@ impl LanguageToolWorker {
             });
         }
 
-        // If java exits immediately (missing jar), fail fast instead of
-        // waiting out the full readiness timeout.
-        std::thread::sleep(Duration::from_millis(300));
-        match child.try_wait() {
-            Ok(Some(status)) => Err(format!("LanguageTool exited early: {status}")),
-            Ok(None) => {
-                log::info!("LanguageTool process spawned on port {port}");
-                Ok(child)
-            }
-            Err(e) => Err(format!("failed to poll LanguageTool process: {e:?}")),
+        log::info!("LanguageTool process spawned on port {port}");
+        Ok(child)
+    }
+
+    /// Drain a dead child's stderr (bounded) for failure diagnostics.
+    fn read_child_stderr(child: &mut Child) -> String {
+        let mut output = String::new();
+        if let Some(stderr) = child.stderr.take() {
+            let mut reader = BufReader::new(stderr);
+            let _ = reader.read_to_string(&mut output);
         }
+        let lines: Vec<&str> = output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(5)
+            .collect();
+        if lines.is_empty() {
+            "no output on stderr".to_string()
+        } else {
+            lines.join(" | ")
+        }
+    }
+
+    /// (fasttext model, fasttext binary) locations relative to the
+    /// LanguageTool dir, covering every layout that does not already ship a
+    /// server.properties: dev artifacts (setup.sh), desktop payloads, Flatpak.
+    const FASTTEXT_LAYOUTS: &'static [(&'static str, &'static str)] = &[
+        ("../lid.176.ftz", "../fastText/fasttext"),
+        ("../lid.176.ftz", "../bin/fasttext"),
+        ("../lid.176.ftz", "../../bin/fasttext"),
+    ];
+
+    /// Recreate a missing server.properties from the surrounding layout so a
+    /// lost config fails open instead of killing startup with a bare exit
+    /// status. Never overwrites an existing file.
+    fn ensure_server_properties(lt_dir: &Path) {
+        let props = lt_dir.join("server.properties");
+        if props.is_file() {
+            return;
+        }
+        for (model, binary) in Self::FASTTEXT_LAYOUTS {
+            if lt_dir.join(model).is_file() && lt_dir.join(binary).is_file() {
+                let contents = format!("fasttextModel={model}\nfasttextBinary={binary}\n");
+                match std::fs::write(&props, &contents) {
+                    Ok(()) => log::warn!(
+                        "server.properties was missing; created it for this layout:\n{contents}"
+                    ),
+                    Err(e) => log::warn!(
+                        "server.properties is missing and could not be created at {props:?}: {e:?}"
+                    ),
+                }
+                return;
+            }
+        }
+        log::warn!(
+            "server.properties is missing at {props:?} and no fasttext layout was recognized; \
+             starting without language-detection config"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LanguageToolWorker;
+    use std::path::PathBuf;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rhesis-lt-test-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &PathBuf) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"").unwrap();
+    }
+
+    #[test]
+    fn creates_properties_for_dev_layout() {
+        let base = scratch_dir("dev");
+        let lt_dir = base.join("LanguageTool");
+        std::fs::create_dir_all(&lt_dir).unwrap();
+        touch(&base.join("lid.176.ftz"));
+        touch(&base.join("fastText/fasttext"));
+
+        LanguageToolWorker::ensure_server_properties(&lt_dir);
+
+        let props = std::fs::read_to_string(lt_dir.join("server.properties")).unwrap();
+        assert_eq!(
+            props,
+            "fasttextModel=../lid.176.ftz\nfasttextBinary=../fastText/fasttext\n"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn creates_properties_for_desktop_layout() {
+        let base = scratch_dir("desktop");
+        let lt_dir = base.join("LanguageTool");
+        std::fs::create_dir_all(&lt_dir).unwrap();
+        touch(&base.join("lid.176.ftz"));
+        touch(&base.join("bin/fasttext"));
+
+        LanguageToolWorker::ensure_server_properties(&lt_dir);
+
+        let props = std::fs::read_to_string(lt_dir.join("server.properties")).unwrap();
+        assert_eq!(
+            props,
+            "fasttextModel=../lid.176.ftz\nfasttextBinary=../bin/fasttext\n"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn never_overwrites_existing_properties() {
+        let base = scratch_dir("existing");
+        let lt_dir = base.join("LanguageTool");
+        std::fs::create_dir_all(&lt_dir).unwrap();
+        touch(&base.join("lid.176.ftz"));
+        touch(&base.join("fastText/fasttext"));
+        std::fs::write(lt_dir.join("server.properties"), "custom=true\n").unwrap();
+
+        LanguageToolWorker::ensure_server_properties(&lt_dir);
+
+        let props = std::fs::read_to_string(lt_dir.join("server.properties")).unwrap();
+        assert_eq!(props, "custom=true\n");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn unrecognized_layout_creates_nothing() {
+        let base = scratch_dir("bare");
+        let lt_dir = base.join("LanguageTool");
+        std::fs::create_dir_all(&lt_dir).unwrap();
+
+        LanguageToolWorker::ensure_server_properties(&lt_dir);
+
+        assert!(!lt_dir.join("server.properties").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
