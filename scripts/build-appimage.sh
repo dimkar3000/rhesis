@@ -133,7 +133,7 @@ bundle_qt() {
             found=$(find "$qt_plugin_dir/platforms" -maxdepth 1 -name "$plat" -type f 2>/dev/null || true)
             [ -n "$found" ] && cp "$found" "$APPDIR/app/lib/qt6/plugins/platforms/" 2>/dev/null
         done
-        for subdir in platforminputcontexts platformthemes xcbglintegrations imageformats tls networkinformation wayland-shell-integration; do
+        for subdir in platforminputcontexts platformthemes styles xcbglintegrations imageformats tls networkinformation wayland-shell-integration; do
             [ -d "$qt_plugin_dir/$subdir" ] && {
                 mkdir -p "$APPDIR/app/lib/qt6/plugins/$subdir"
                 cp "$qt_plugin_dir/$subdir/"*.so "$APPDIR/app/lib/qt6/plugins/$subdir/" 2>/dev/null || true

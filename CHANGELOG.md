@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.4.0] - 2026-09-05
-
+- fix: scrollable settings
 - fix: appimage + ci fixes
 - feat: formating + clippy + safety comments
 - fix: releases file generator in CI

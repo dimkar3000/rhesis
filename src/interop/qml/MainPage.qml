@@ -121,6 +121,10 @@ Kirigami.Page {
         background: null
         wrapMode: Controls.TextArea.Wrap
         placeholderText: qsTr("enter_text_placeholder")
+        // Rhesis checks text itself via LanguageTool: keep the desktop
+        // style's Sonnet highlighter off, it has no backends in the
+        // AppImage (and would only duplicate suggestions with warnings).
+        Kirigami.SpellCheck.enabled: false
         Component.onCompleted: highlighter.setTextDocument(sourceArea.textDocument)
         onTextChanged: t => {
             helper.text_area_changed(sourceArea.text);

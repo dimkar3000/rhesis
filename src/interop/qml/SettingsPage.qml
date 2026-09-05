@@ -197,6 +197,20 @@ Kirigami.Page {
         }
     ]
 
+    // The settings can exceed the window height (720px cap): a Flickable
+    // keeps every option reachable. The children below keep their anchors,
+    // which resolve in content coordinates; contentWidth matches the
+    // viewport width so only vertical scrolling happens.
+    Flickable {
+        id: pageFlickable
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: colorsCol.y + colorsCol.height + Kirigami.Units.smallSpacing
+        clip: true
+        Controls.ScrollBar.vertical: Controls.ScrollBar {
+            policy: Controls.ScrollBar.AsNeeded
+        }
+
     Item {
         id: formBox
         width: Math.max(formLayout.implicitWidth + Kirigami.Units.smallSpacing * 16, Kirigami.Units.gridUnit * 20)
@@ -307,6 +321,7 @@ Kirigami.Page {
     }
 
     ColumnLayout {
+        id: colorsCol
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: formBox.bottom
         anchors.topMargin: Kirigami.Units.largeSpacing
@@ -383,5 +398,6 @@ Kirigami.Page {
                 });
             }
         }
+    }
     }
 }
