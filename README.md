@@ -67,11 +67,11 @@ for a per-user install.
 ## Completed/Pending Features
 - [x] Basic suggestions features 
 - [x] Flatpak distribution
-- [ ] I18N - Localization beyond English
+- [x] I18N - Localization beyond English
 - [ ] External LanguageTool server - Support for remote LanguageTool instances
-- [ ] Better UI/UX - Improved syntax highlighting in the editor
+- [x] Better UI/UX - Improved syntax highlighting in the editor
 - [ ] Ability to run in the background as allow for the server to be used by other apps.
-- [ ] Alternative distribution methods - Native packages beyond Flatpak
+- [x] Alternative distribution methods - Native packages beyond Flatpak
 - [ ] Windows build?
 
 ## Local Development

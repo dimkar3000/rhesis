@@ -1,4 +1,4 @@
-use std::{sync::atomic::Ordering, thread, time::Duration};
+use std::{net::TcpStream, sync::atomic::Ordering, thread, time::Duration};
 
 use rhesis::interop::async_messaging_helper::AsyncMessagingHelperRust;
 
@@ -110,4 +110,75 @@ fn helper_can_restart_a_dead_worker() {
     helper.ensure_worker_running();
     assert!(helper.worker_running.load(Ordering::SeqCst));
     assert!(helper.event_sender.is_some());
+}
+
+/// The embedded server needs a java runtime and a LanguageTool installation.
+fn language_tool_available() -> bool {
+    use std::path::Path;
+    use std::process::Command;
+    for dir in ["./build/LanguageTool", "./build/artifacts/LanguageTool"] {
+        if Path::new(&format!("{dir}/languagetool-server.jar")).exists()
+            && Path::new(&format!("{dir}/server.properties")).exists()
+            && Command::new("java").arg("-version").output().is_ok()
+        {
+            return true;
+        }
+    }
+    eprintln!("skipping: LanguageTool not found in ./build/LanguageTool or ./build/artifacts/LanguageTool");
+    false
+}
+
+fn wait_for_server(port: u16, timeout: Duration) -> bool {
+    wait_for(|| TcpStream::connect(("localhost", port)).is_ok(), timeout)
+}
+
+fn wait_for_port_free(port: u16, timeout: Duration) -> bool {
+    wait_for(|| TcpStream::connect(("localhost", port)).is_err(), timeout)
+}
+
+/// Dropping the helper must SIGKILL the running server (cross-platform
+/// `Child::kill`) and join the worker, so the port is free the moment drop
+/// returns — no orphaned server blocking the next start.
+#[test]
+fn drop_kills_running_server_and_frees_port() {
+    if !language_tool_available() {
+        return;
+    }
+    let port = 26892;
+
+    let mut helper = AsyncMessagingHelperRust::default();
+    helper.restart(true, &port.to_string());
+    assert!(
+        wait_for_server(port, Duration::from_secs(60)),
+        "embedded server should start"
+    );
+
+    drop(helper);
+
+    assert!(
+        wait_for_port_free(port, Duration::from_secs(10)),
+        "server port must be free right after drop (joined worker kills java)"
+    );
+}
+
+/// Killing the app mid-startup must not leave a server behind either: the
+/// worker is joined on drop, killing a partially started child on its way out.
+#[test]
+fn drop_during_startup_leaves_no_server() {
+    if !language_tool_available() {
+        return;
+    }
+    let port = 26893;
+
+    let mut helper = AsyncMessagingHelperRust::default();
+    helper.restart(true, &port.to_string());
+    drop(helper);
+
+    // Past any spawn attempt: either java never started, or terminate_child
+    // already killed it during the joined shutdown.
+    thread::sleep(Duration::from_secs(5));
+    assert!(
+        wait_for_port_free(port, Duration::from_secs(10)),
+        "no server may remain after dropping a starting helper"
+    );
 }

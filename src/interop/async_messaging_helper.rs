@@ -53,8 +53,12 @@ impl Drop for AsyncMessagingHelperRust {
                 }
             }
         }
-        // Detach the worker thread; it exits on its own after processing Kill.
-        self.worker_thread.take();
+
+        if let Some(thread) = self.worker_thread.take() {
+            if let Err(e) = thread.join() {
+                log::warn!("LanguageTool worker thread panicked during shutdown: {e:?}");
+            }
+        }
     }
 }
 

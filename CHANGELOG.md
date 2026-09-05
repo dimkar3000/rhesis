@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [0.4.0] - 2026-09-05
+- fix: server will always be killed before terminating the app
 - fix: scrollable settings
 - fix: appimage + ci fixes
 - feat: formating + clippy + safety comments
