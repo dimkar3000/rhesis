@@ -54,6 +54,12 @@ GitHub Actions workflow (`.github/workflows/build.yml`):
 - Builds Flatpak + AppImage + desktop tarballs (`build-desktop.sh`, global and `--local`), uploads to release on version tags
 - Release includes `runner.sh` alongside the desktop tarballs for download-and-install
 
+## Releasing
+
+- `CHANGELOG.md` is the single source of truth for release notes — never hand-edit the `<releases>` block in `io.github.dimkar3000.rhesis.metainfo.xml` (marked generated).
+- Before tagging: add a `## [X.Y.Z]` section to `CHANGELOG.md`, set the same version in `Cargo.toml`, run `python3 scripts/generate-metainfo.py` and commit the result (every build also regenerates it automatically).
+- Tagging: final `vX.Y.Z` (CI fails the build if `Cargo.toml`/`CHANGELOG.md` disagree with the tag — check locally with `./scripts/check-versions.sh --tag vX.Y.Z`); pre-release `vX.Y.Z-*` embeds the pre-release version in build artifacts transiently and skips the version check. A commit tagged as both is treated as a release.
+
 ## QML language server
 
 Config in `.qmlls.ini`:

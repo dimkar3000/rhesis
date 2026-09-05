@@ -121,6 +121,7 @@ main() {
     step "Building application" build_rust_app
     step "Building fastText" build_fasttext
     step "Downloading language model" setup_lid_model
+    step "Regenerating metainfo releases" regenerate_metainfo
     step "Installing application files" install_app "$install_root"
     step "Setting up LanguageTool" setup_languagetool
 
@@ -160,6 +161,14 @@ build_fasttext() {
     fi
 
     make -C "$BUILD_DIR/fasttext-src" -j$(nproc) CXXFLAGS="-pthread -std=c++17 -march=native -include cstdint"
+}
+
+# --- Regenerate metainfo releases from CHANGELOG.md ---
+# CHANGELOG.md is the single source of truth; the <releases> block in the
+# metainfo file is derived (dates from git tags). Honors $GITHUB_REF_NAME,
+# so pre-release builds embed the pre-release version transiently.
+regenerate_metainfo() {
+    python3 "$PROJECT_DIR/scripts/generate-metainfo.py"
 }
 
 # --- Install application files ---

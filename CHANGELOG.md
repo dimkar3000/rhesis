@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0]
+
+- LanguageTool proper managment and status indicator in UI
+
 ## [0.3.0]
 
 - add more discribution methods. Now we support Flatpak, Appimage, normal installations
@@ -13,15 +17,8 @@ All notable changes to this project will be documented in this file.
 - implemented custom colors for suggestion + started on translations
 
 ## [0.1.0]
-- add config
-- pipeline test
-- script to automate setting up LanguageTool
-- add readme
-- flatpak buildable and working
-- settings page created and embeded server is properly managed
-- preparation for adding other pages
-- metadata work and cleanup
-- async suggestions from a langtool server
-- ui work finalized and langtool client created
-- initial prototype work done
-- first commit. Just builds
+
+- Grammar, style, and spell checking for over 25 languages
+- Automatic language detection, just start typing
+- 100 % offline, your writing stays private
+- Native KDE desktop experience

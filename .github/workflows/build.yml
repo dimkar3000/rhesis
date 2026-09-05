@@ -18,6 +18,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check version consistency (final releases only)
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: ./scripts/check-versions.sh
+
       - name: Determine build profile
         id: profile
         run: |
