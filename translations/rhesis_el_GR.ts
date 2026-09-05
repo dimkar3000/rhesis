@@ -2,107 +2,183 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="en">
 <context>
+    <name>MainPage</name>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="56"/>
+        <source>settings_action</source>
+        <translation>Ρυθμίσεις</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="98"/>
+        <source>more_info_tooltip</source>
+        <translation>Περισσότερα:</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="98"/>
+        <source>rule_id_label</source>
+        <translation>Rule id:</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="98"/>
+        <source>category_id_label</source>
+        <translation>Category id:</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="114"/>
+        <source>enter_text_placeholder</source>
+        <translation>Εισαγωγή κειμένου...</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="23"/>
+        <source>lt_started</source>
+        <translation>Γραμματική: Ενεργή</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="25"/>
+        <source>lt_starting</source>
+        <translation>Γραμματική: Εκκίνηση…</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="29"/>
+        <source>lt_stopped</source>
+        <translation>Γραμματική: Ανενεργή</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/MainPage.qml" line="27"/>
+        <source>lt_failed</source>
+        <translation>Γραμματική: Αποτυχία</translation>
+    </message>
+</context>
+<context>
     <name>Root</name>
-    <message id="app_title">
+    <message>
+        <location filename="../src/interop/qml/Root.qml" line="17"/>
         <source>app_title</source>
         <translation>Rhesis</translation>
     </message>
 </context>
 <context>
-    <name>MainPage</name>
-    <message id="settings_action">
-        <source>settings_action</source>
-        <translation>Ρυθμίσεις</translation>
+    <name>RuleListItem</name>
+    <message>
+        <location filename="../src/interop/qml/components/RuleListItem.qml" line="25"/>
+        <source>rule_type_category</source>
+        <translation>Κατηγορία</translation>
     </message>
-    <message id="more_info_tooltip">
-        <source>more_info_tooltip</source>
-        <translation>Περισσότερα:</translation>
+    <message>
+        <location filename="../src/interop/qml/components/RuleListItem.qml" line="26"/>
+        <source>rule_type_rule</source>
+        <translation>Κανόνας</translation>
     </message>
-    <message id="rule_id_label">
-        <source>rule_id_label</source>
-        <translation>Rule id:</translation>
+    <message>
+        <location filename="../src/interop/qml/components/RuleListItem.qml" line="51"/>
+        <source>filter_text_placeholder</source>
+        <translation>Όνομα φίλτρου...</translation>
     </message>
-    <message id="category_id_label">
-        <source>category_id_label</source>
-        <translation>Category id:</translation>
+    <message>
+        <location filename="../src/interop/qml/components/RuleListItem.qml" line="101"/>
+        <source>click_pick_color_tooltip</source>
+        <translation>Επιλογή χρώματος</translation>
     </message>
-    <message id="enter_text_placeholder">
-        <source>enter_text_placeholder</source>
-        <translation>Εισαγωγή κειμένου...</translation>
+    <message>
+        <location filename="../src/interop/qml/components/RuleListItem.qml" line="113"/>
+        <source>remove_filter_tooltip</source>
+        <translation>Αφαίρεση φίλτρου</translation>
+    </message>
+</context>
+<context>
+    <name>ServerStatusIndicator</name>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="32"/>
+        <source>lt_started</source>
+        <translation>Γραμματική: Ενεργή</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="34"/>
+        <source>lt_starting</source>
+        <translation>Γραμματική: Εκκίνηση…</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="36"/>
+        <source>lt_failed</source>
+        <translation>Γραμματική: Αποτυχία</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="38"/>
+        <source>lt_stopped</source>
+        <translation>Γραμματική: Ανενεργή</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="66"/>
+        <source>lt_retry</source>
+        <translation>Επανάληψη</translation>
+    </message>
+    <message>
+        <location filename="../src/interop/qml/components/ServerStatusIndicator.qml" line="74"/>
+        <source>lt_retry_tooltip</source>
+        <translation>Επανάληψη εκκίνησης του διακομιστή γραμματικής</translation>
     </message>
 </context>
 <context>
     <name>SettingsPage</name>
-    <message id="settings_title">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="11"/>
         <source>settings_title</source>
         <translation>Ρυθμίσεις</translation>
     </message>
-    <message id="apply_action">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="146"/>
         <source>apply_action</source>
         <translation>Εφαρμογή</translation>
     </message>
-    <message id="embedded_lt_settings_section">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="186"/>
         <source>embedded_lt_settings_section</source>
         <translation>Ενσωματομένο LanguageTool Server</translation>
     </message>
-    <message id="enable_embed_label">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="191"/>
         <source>enable_embed_label</source>
         <translation>Ενεργοποίηση</translation>
     </message>
-    <message id="port_label">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="197"/>
         <source>port_label</source>
         <translation>Θύρα</translation>
     </message>
-    <message id="port_tooltip">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="220"/>
         <source>port_tooltip</source>
         <translation>Διαθέσιμες Ρυθμίσεις: [1-65534]</translation>
     </message>
-    <message id="reset_port_tooltip">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="231"/>
         <source>reset_port_tooltip</source>
         <translation>Επαναφορά θύρας</translation>
     </message>
-    <message id="tooltip_settings_section">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="239"/>
         <source>tooltip_settings_section</source>
         <translation>Ρυθμίσεις για Tooltips</translation>
     </message>
-    <message id="enable_tooltip_label">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="244"/>
         <source>enable_tooltip_label</source>
         <translation>Ενεργοποίηση</translation>
     </message>
-    <message id="more_info_label">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="251"/>
         <source>more_info_label</source>
         <translation>Προσθετες πληροφορίες</translation>
     </message>
-    <message id="suggestion_colors_heading">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="267"/>
         <source>suggestion_colors_heading</source>
         <translation>Χρώματα προτάσεων</translation>
     </message>
-    <message id="add_filter_button">
+    <message>
+        <location filename="../src/interop/qml/SettingsPage.qml" line="327"/>
         <source>add_filter_button</source>
         <translation>Προσθήκη φίλτρου</translation>
-    </message>
-</context>
-<context>
-    <name>RuleListItem</name>
-    <message id="rule_type_category">
-        <source>rule_type_category</source>
-        <translation>Κατηγορία</translation>
-    </message>
-    <message id="rule_type_rule">
-        <source>rule_type_rule</source>
-        <translation>Κανόνας</translation>
-    </message>
-    <message id="filter_text_placeholder">
-        <source>filter_text_placeholder</source>
-        <translation>Όνομα φίλτρου...</translation>
-    </message>
-    <message id="click_pick_color_tooltip">
-        <source>click_pick_color_tooltip</source>
-        <translation>Επιλογή χρώματος</translation>
-    </message>
-    <message id="remove_filter_tooltip">
-        <source>remove_filter_tooltip</source>
-        <translation>Αφαίρεση φίλτρου</translation>
     </message>
 </context>
 </TS>

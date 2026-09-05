@@ -15,7 +15,7 @@ CLEAN_BUILD=false
 usage() {
     echo "Usage: $(basename "$0") [OPTIONS]"
     echo ""
-    echo "Builds the Rust application, fastText, LanguageTool, and a trimmed JRE."
+    echo "Regenerates translations, then builds the Rust application, fastText, LanguageTool, and a trimmed JRE."
     echo "Requires CMake, Qt6, a Rust toolchain, and a JDK 17+ with jlink."
     echo ""
     echo "Options:"
@@ -38,6 +38,70 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --- Locate a Qt6 linguist tool, looking beyond PATH ---
+# lupdate/lrelease often live in a Qt libexec dir (e.g. /usr/lib/qt6/bin)
+# without being on PATH. Check command names first, then known locations.
+find_qt_linguist_tool() {
+    local name dir
+    for name in "$@"; do
+        if command -v "$name" &>/dev/null; then
+            command -v "$name"
+            return 0
+        fi
+    done
+    for dir in /usr/lib/qt6/bin /usr/lib/x86_64-linux-gnu/qt6/bin /usr/lib64/qt6/bin /usr/local/lib/qt6/bin; do
+        for name in "$@"; do
+            if [ -x "$dir/$name" ]; then
+                echo "$dir/$name"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# --- Refresh .ts sources from QML and recompile .qm, unconditionally ---
+# Always runs (not only when inputs look stale) so newly added qsTr()
+# strings always end up in the shipped translation files.
+regenerate_translations() {
+    cd "$PROJECT_DIR"
+
+    local lupdate_cmd lrelease_cmd
+    lupdate_cmd="$(find_qt_linguist_tool lupdate6 lupdate || true)"
+    lrelease_cmd="$(find_qt_linguist_tool lrelease6 lrelease || true)"
+
+    if [ -z "$lupdate_cmd" ] || [ -z "$lrelease_cmd" ]; then
+        echo "Warning: Qt linguist tools (lupdate/lrelease) not found; translation files will not be regenerated" >&2
+        return 0
+    fi
+
+    local qml_files=()
+    while IFS= read -r f; do
+        qml_files+=("$f")
+    done < <(find "$PROJECT_DIR/src/interop/qml" -name '*.qml' | sort)
+    if [ "${#qml_files[@]}" -eq 0 ]; then
+        echo "Warning: no QML files found; skipping translation regeneration" >&2
+        return 0
+    fi
+
+    shopt -s nullglob
+    local ts_files=(translations/*.ts)
+    shopt -u nullglob
+    if [ "${#ts_files[@]}" -eq 0 ]; then
+        echo "Warning: no .ts files in translations/; skipping translation regeneration" >&2
+        return 0
+    fi
+
+    # Drop stale outputs so regeneration is unconditional, then refresh the
+    # .ts sources from QML and recompile .qm next to them (.qm is gitignored;
+    # local `cargo run` also picks these up via the ./translations fallback).
+    rm -f translations/*.qm "$BUILD_DIR/cmake-build/"*.qm
+    if ! "$lupdate_cmd" "${qml_files[@]}" -ts "${ts_files[@]}"; then
+        echo "Warning: lupdate reported errors; .ts files may be incomplete, continuing with lrelease" >&2
+    fi
+    "$lrelease_cmd" "${ts_files[@]}"
+}
+
 # --- Main ---
 main() {
     local install_root="$BUILD_DIR/artifacts/app"
@@ -53,6 +117,7 @@ main() {
         rm -rf "$BUILD_DIR"
     fi
 
+    step "Regenerating translations" regenerate_translations
     step "Building application" build_rust_app
     step "Building fastText" build_fasttext
     step "Downloading language model" setup_lid_model
@@ -118,25 +183,25 @@ install_app() {
 
     local translations_installed=false
     local trans_dir="$share_dir/rhesis/translations"
-    if [ -d "$binary_dir/translations" ]; then
+    # Fresh .qm files regenerated next to the .ts sources by
+    # regenerate_translations() take precedence over anything cached.
+    if compgen -G "$PROJECT_DIR/translations/*.qm" > /dev/null; then
         mkdir -p "$trans_dir"
-        cp "$cmake_build/release/translations/"*.qm "$trans_dir/" 2>/dev/null && translations_installed=true
-    elif [ -d "$cmake_build/translations" ]; then
-        mkdir -p "$trans_dir"
-        cp "$cmake_build/translations/"*.qm "$trans_dir/" 2>/dev/null && translations_installed=true
+        cp "$PROJECT_DIR/translations/"*.qm "$trans_dir/" && translations_installed=true
     fi
-    if [ "$translations_installed" = false ] && [ -d "$PROJECT_DIR/translations" ]; then
-        mkdir -p "$trans_dir"
-        local lrelease_cmd="$(command -v lrelease6 || command -v lrelease || echo "")"
-        if [ -n "$lrelease_cmd" ]; then
-            for ts_file in "$PROJECT_DIR"/translations/*.ts; do
-                [ -f "$ts_file" ] || continue
-                "$lrelease_cmd" -silent "$ts_file" -qm "$trans_dir/$(basename "${ts_file%.ts}.qm")"
-            done
-            translations_installed=true
-        else
-            cp "$PROJECT_DIR/translations/"*.qm "$trans_dir/" 2>/dev/null || true
-        fi
+    # Fall back to cmake-built outputs (e.g. when linguist tools are missing).
+    if [ "$translations_installed" = false ]; then
+        local qm_dir
+        for qm_dir in "$binary_dir/translations" "$cmake_build/translations" "$cmake_build"; do
+            if compgen -G "$qm_dir/*.qm" > /dev/null; then
+                mkdir -p "$trans_dir"
+                cp "$qm_dir/"*.qm "$trans_dir/" && translations_installed=true
+                break
+            fi
+        done
+    fi
+    if [ "$translations_installed" = false ]; then
+        echo "Warning: no translation (.qm) files found; shipping without translations" >&2
     fi
 
     mkdir -p "$share_dir/applications"

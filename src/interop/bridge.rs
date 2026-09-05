@@ -75,10 +75,24 @@ pub mod ffi {
 
         #[qobject]
         #[qml_element]
+        #[qproperty(i32, server_status)]
+        #[qproperty(QString, server_status_reason)]
         type AsyncMessagingHelper = super::AsyncMessagingHelperRust;
 
         #[qinvokable]
         fn restart(self: Pin<&mut AsyncMessagingHelper>, embedded: bool, address: &QString);
+
+        #[qinvokable]
+        fn start_server(self: Pin<&mut AsyncMessagingHelper>);
+
+        #[qinvokable]
+        fn stop_server(self: Pin<&mut AsyncMessagingHelper>);
+
+        #[qinvokable]
+        fn set_server_port(self: Pin<&mut AsyncMessagingHelper>, port: &QString);
+
+        #[qinvokable]
+        fn retry_server(self: Pin<&mut AsyncMessagingHelper>);
 
         #[qinvokable]
         fn text_area_changed(self: Pin<&mut AsyncMessagingHelper>, text: QString);
@@ -162,15 +176,39 @@ use cxx_qt_lib::{QString, QVariant};
 use std::pin::Pin;
 
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
-use crate::languagetool::service::Message;
+use crate::languagetool::service::LanguageToolWorkerEvent;
 
 impl ffi::AsyncMessagingHelper {
     fn restart(self: Pin<&mut Self>, embedded: bool, address: &QString) {
         self.rust_mut().restart(embedded, &address.to_string());
     }
 
+    fn start_server(self: Pin<&mut Self>) {
+        self.rust_mut().start_server();
+    }
+
+    fn stop_server(self: Pin<&mut Self>) {
+        self.rust_mut().stop_server();
+    }
+
+    fn set_server_port(self: Pin<&mut Self>, port: &QString) {
+        self.rust_mut().set_server_port(&port.to_string());
+    }
+
+    fn retry_server(self: Pin<&mut Self>) {
+        self.rust_mut().retry_server();
+    }
+
     fn text_area_changed(self: Pin<&mut Self>, text: QString) {
-        let _ = self.message_sender.send(Message::Suggestion(text));
+        let event = LanguageToolWorkerEvent::UpdateSuggestions(text);
+        match &self.event_sender {
+            Some(sender) => {
+                if let Err(e) = sender.send(event) {
+                    log::warn!("failed to send text change to the worker: {e:?}");
+                }
+            }
+            None => log::warn!("text change dropped, LanguageTool worker not running"),
+        }
     }
 
     fn update_colors(self: Pin<&mut Self>, colors: QMap_QString_QVariant) {
@@ -180,7 +218,15 @@ impl ffi::AsyncMessagingHelper {
                 pairs.push((k.clone(), s));
             }
         }
-        let _ = self.message_sender.send(Message::UpdateColors(pairs));
+        let event = LanguageToolWorkerEvent::UpdateColors(pairs);
+        match &self.event_sender {
+            Some(sender) => {
+                if let Err(e) = sender.send(event) {
+                    log::warn!("failed to send color update to the worker: {e:?}");
+                }
+            }
+            None => log::warn!("color update dropped, LanguageTool worker not running"),
+        }
     }
 }
 
@@ -204,6 +250,7 @@ impl ffi::CustomHighlighter {
     }
 
     pub fn replace_word(mut self: Pin<&mut Self>, start: i64, end: i64, replacement: &QString) {
+        log::debug!("replacing word at [{start}, {end}] with {replacement:?}");
         self.as_mut().rust_mut().recommendations.clear();
         unsafe {
             let doc = self.document();
@@ -230,9 +277,12 @@ impl ffi::CustomHighlighter {
     }
 
     pub fn start_message_thread(self: Pin<&mut Self>, helper: *mut ffi::AsyncMessagingHelper) {
-        let helper = unsafe { &mut *helper };
-        let qt_thread = self.qt_thread();
-        self.rust_mut().start_message_thread(helper, qt_thread);
+        let helper_pin = unsafe { Pin::new_unchecked(&mut *helper) };
+        let helper_thread = helper_pin.qt_thread();
+        let helper_rust = helper_pin.rust_mut();
+        let highlighter_thread = self.qt_thread();
+        self.rust_mut()
+            .start_message_thread(helper_rust, helper_thread, highlighter_thread);
     }
 }
 

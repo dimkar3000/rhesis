@@ -1,220 +1,153 @@
 use std::{
-    io::{BufRead, BufReader},
-    path::PathBuf,
-    process::{Child, Command, Stdio},
-    time::Duration,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::JoinHandle,
 };
 
+use crossbeam::channel::{Receiver, Sender};
 use cxx_qt_lib::QString;
-use tokio::{
-    sync::watch::{channel, Receiver, Sender},
-    task::JoinHandle,
-    time::sleep,
-};
 
-use crate::languagetool::{
-    client::LanguageToolClient,
-    service::{Message, Suggestion},
-};
+use crate::languagetool::service::{LanguageToolWorker, LanguageToolWorkerEvent, Message};
 
 pub struct AsyncMessagingHelperRust {
-    pub message_sender: Sender<Message>,
-    pub message_receiver: Receiver<Message>,
-    pub suggestion_sender: Sender<Suggestion>,
-    pub suggestion_receiver: Receiver<Suggestion>,
+    /// Clone of the worker's event channel, used to send UI events to it
+    pub event_sender: Option<Sender<LanguageToolWorkerEvent>>,
+    /// Clone of the worker's message channel, used to receive results from it.
+    /// Sole owner is the dispatcher thread (see `CustomHighlighterRust`);
+    /// do not clone it elsewhere to avoid stealing messages.
+    pub message_receiver: Option<Receiver<Message>>,
 
-    pub languagetool_handle: Option<Child>,
+    /// True while the LanguageTool worker thread is alive
+    pub worker_running: Arc<AtomicBool>,
+    pub worker_thread: Option<JoinHandle<()>>,
 
-    pub handle: Option<JoinHandle<()>>,
+    // Mirrors `WorkerStatus` for QML (`qproperty` in bridge.rs).
+    // Status codes: 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed.
+    pub server_status: i32,
+    pub server_status_reason: QString,
 }
 
 impl Default for AsyncMessagingHelperRust {
     fn default() -> Self {
-        let (message_sender, message_receiver) =
-            channel::<Message>(Message::Suggestion(QString::default()));
-        let (suggestion_sender, suggestion_receiver) = channel::<Suggestion>(Suggestion::default());
-
         Self {
-            message_sender,
-            message_receiver,
-            suggestion_sender,
-            suggestion_receiver,
-            languagetool_handle: None,
-            handle: None,
+            event_sender: None,
+            message_receiver: None,
+            worker_running: Arc::new(AtomicBool::new(false)),
+            worker_thread: None,
+            server_status: 0, // Stopped
+            server_status_reason: QString::default(),
         }
     }
 }
 
 impl Drop for AsyncMessagingHelperRust {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.as_ref() {
-            log::info!("aborting messaging thread");
-            handle.abort();
+        if self.worker_running.swap(false, Ordering::SeqCst) {
+            if let Some(sender) = &self.event_sender {
+                log::info!("Sending Kill to LanguageTool worker");
+                if let Err(e) = sender.send(LanguageToolWorkerEvent::Kill) {
+                    log::warn!("failed to send Kill to LanguageTool worker: {e:?}");
+                }
+            }
         }
-        if let Some(mut child) = self.languagetool_handle.take() {
-            log::info!("Killing LanguageTool");
-            let _ = child.kill();
-        }
+        // Detach the worker thread; it exits on its own after processing Kill.
+        self.worker_thread.take();
     }
 }
 
 impl AsyncMessagingHelperRust {
-    pub fn start_async_worker(&mut self, port: &str) {
-        let mut message_receiver = self.message_receiver.clone();
-        let suggestion_sender = self.suggestion_sender.clone();
+    /// Make sure the LanguageTool worker is running, starting it in a
+    /// standalone thread if it isn't. The worker boots in `Stopped`.
+    pub fn ensure_worker_running(&mut self) {
+        if self.worker_running.load(Ordering::SeqCst) {
+            return;
+        }
 
-        let mut client = LanguageToolClient::new_local(port);
+        if let Some(thread) = self.worker_thread.take() {
+            // The previous worker died; make sure its thread finished.
+            log::debug!("joining previous LanguageTool worker thread");
+            let _ = thread.join();
+        }
 
-        self.handle = Some(tokio::spawn(async move {
-            let mut last_text = QString::default();
-            loop {
-                let _ = message_receiver.changed().await;
+        log::info!("Starting LanguageTool worker thread");
 
-                loop {
-                    let debounce = sleep(Duration::from_millis(300));
-                    tokio::pin!(debounce);
-                    tokio::select! {
-                        _ = &mut debounce => break,
-                        _ = message_receiver.changed() => {}
-                    }
+        let handles = LanguageToolWorker::default().start();
+
+        self.event_sender = Some(handles.event_sender);
+        self.message_receiver = Some(handles.message_receiver);
+        self.worker_running = handles.running;
+        self.worker_thread = Some(handles.thread);
+    }
+
+    fn send(&self, event: LanguageToolWorkerEvent) {
+        match &self.event_sender {
+            Some(sender) => {
+                if let Err(e) = sender.send(event) {
+                    log::warn!("failed to send event to the worker: {e:?}");
                 }
-                let message = message_receiver.borrow().clone();
-                let text = match message {
-                    Message::Suggestion(x) => x,
-                    Message::UpdateColors(x) => {
-                        client.set_colors(x);
-                        if !last_text.trimmed().is_empty() {
-                            let suggestions =
-                                client.get_recommendation(last_text.to_string()).await;
-                            let _ = suggestion_sender.send(Suggestion(suggestions));
-                        }
-                        continue;
-                    }
-                };
-
-                if text == last_text || text.trimmed().is_empty() {
-                    continue;
-                }
-
-                last_text = text.clone();
-
-                let suggestions = client.get_recommendation(text.to_string()).await;
-                let _ = suggestion_sender.send(Suggestion(suggestions));
             }
-        }));
-    }
-
-    pub fn restart(&mut self, embedded: bool, port: &str) {
-        log::info!("restart called, embedded={embedded}, port={port}");
-        if let Some(mut child) = self.languagetool_handle.take() {
-            log::trace!("aborting LanguageTool");
-            let _ = child.kill();
-        }
-
-        if let Some(handle) = self.handle.take() {
-            log::trace!("aborting messaging job");
-            handle.abort();
-        }
-
-        log::trace!("restarting messaging job.");
-        self.start_async_worker(port);
-
-        let port = port.to_string();
-        if embedded {
-            log::trace!("Starting LanguageTool at: {port}");
-            self.setup_child(port);
+            None => log::warn!("event dropped, LanguageTool worker not running"),
         }
     }
 
-    fn language_tool_dir() -> PathBuf {
-        let mut path = PathBuf::from("/usr/share/rhesis/LanguageTool");
-        if path.exists() {
-            return path;
-        }
-
-        // Per-user install: $HOME/.local/share/rhesis/LanguageTool
-        if let Some(home) = std::env::var_os("HOME") {
-            let candidate = PathBuf::from(home).join(".local/share/rhesis/LanguageTool");
-            if candidate.is_dir() {
-                return candidate;
-            }
-        }
-
-        // Flatpak: standard app layout
-        path = PathBuf::from("/app/share/rhesis/LanguageTool");
-        if path.exists() {
-            return path;
-        }
-
-        // AppImage: path relative to $APPDIR
-        if let Ok(appdir) = std::env::var("APPDIR") {
-            let candidate = PathBuf::from(format!("{appdir}/app/share/rhesis/LanguageTool"));
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-
-        // Fallback folders for local development
-        let build_path = PathBuf::from("./build/LanguageTool");
-        if build_path.is_dir() {
-            return build_path;
-        }
-        PathBuf::from("./LanguageTool")
+    pub fn start_server(&mut self) {
+        self.ensure_worker_running();
+        log::info!("start_server requested");
+        self.send(LanguageToolWorkerEvent::Start);
     }
 
-    fn setup_child(&mut self, port: String) {
-        let lt_dir = Self::language_tool_dir();
-        log::info!("LanguageTool dir: {:?}", lt_dir);
+    pub fn stop_server(&mut self) {
+        self.ensure_worker_running();
+        log::info!("stop_server requested");
+        self.send(LanguageToolWorkerEvent::Stop);
+    }
 
-        let result = Command::new("java")
-            .args([
-                "-cp",
-                "languagetool-server.jar",
-                "org.languagetool.server.HTTPServer",
-                "--config",
-                "server.properties",
-                "--port",
-                &port,
-                "--allow-origin",
-            ])
-            .current_dir(&lt_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+    pub fn set_server_port(&mut self, port: &str) {
+        self.ensure_worker_running();
+        match port.parse::<u16>() {
+            Ok(p) => {
+                log::info!("set_server_port {p}");
+                self.send(LanguageToolWorkerEvent::SetPort(p));
+            }
+            Err(_) => log::warn!("invalid port {port:?}, ignoring"),
+        }
+    }
 
-        let mut child = match result {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to spawn LanguageTool: {e:?}");
+    pub fn retry_server(&mut self) {
+        self.ensure_worker_running();
+        log::info!("retry_server requested");
+        self.send(LanguageToolWorkerEvent::Retry);
+    }
+
+    pub fn restart(&mut self, embedded: bool, address: &str) {
+        log::info!("restart called, embedded={embedded}, address={address}");
+
+        self.ensure_worker_running();
+
+        let sender = match &self.event_sender {
+            Some(sender) => sender,
+            None => {
+                log::error!("LanguageTool worker has no event sender");
                 return;
             }
         };
 
-        // everything under here is probably over-engineered
-
-        if let Some(out) = child.stdout.take() {
-            tokio::spawn(async move {
-                let reader = BufReader::new(out);
-                for line in reader.lines() {
-                    match line {
-                        Ok(line) => log::trace!("[LanguageTool]: {line}"),
-                        Err(e) => log::error!("Error from stdout reader: {e:?}"),
-                    }
+        let event = if embedded {
+            match address.parse() {
+                Ok(port) => LanguageToolWorkerEvent::RestartLocalServer(port),
+                Err(_) => {
+                    log::warn!("invalid port {address:?} in restart, falling back to 2689");
+                    LanguageToolWorkerEvent::RestartLocalServer(2689)
                 }
-            });
+            }
+        } else {
+            // Disabling the embedded server stops it.
+            LanguageToolWorkerEvent::Stop
+        };
+        if let Err(e) = sender.send(event) {
+            log::warn!("failed to send restart event to the worker: {e:?}");
         }
-        if let Some(error) = child.stderr.take() {
-            tokio::spawn(async move {
-                let reader = BufReader::new(error);
-                for line in reader.lines() {
-                    match line {
-                        Ok(line) => log::trace!("[LanguageTool]: {line}"),
-                        Err(e) => log::error!("Error from stderr reader: {e:?}"),
-                    }
-                }
-            });
-        }
-
-        self.languagetool_handle = Some(child);
     }
 }

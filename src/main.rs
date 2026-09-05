@@ -8,10 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::interop::bridge;
-
-mod interop;
-mod languagetool;
+use rhesis::interop::bridge;
 
 lazy_static! {
     static ref NAMESPACE: QString = QString::from("io.github.dimkar3000.rhesis");
@@ -46,7 +43,9 @@ fn run_ui() {
     if let Some(mut app) = app.as_mut() {
         if let Some(dir) = translations_dir {
             let dir = dir.to_string_lossy().to_string();
-            bridge::ffi::installTranslation(app.as_mut(), &QString::from(&dir));
+            if !bridge::ffi::installTranslation(app.as_mut(), &QString::from(&dir)) {
+                log::warn!("failed to install translations from {dir}");
+            }
         }
     }
 
@@ -57,8 +56,9 @@ fn run_ui() {
 
     // To ensure the style is set correctly
     let style = env::var("QT_QUICK_CONTROLS_STYLE");
-    if style.is_err() {
-        QQuickStyle::set_style(&QString::from("org.kde.desktop"));
+    match style {
+        Ok(style) => log::debug!("using QT_QUICK_CONTROLS_STYLE={style}"),
+        Err(_) => QQuickStyle::set_style(&QString::from("org.kde.desktop")),
     }
 
     if let Some(engine) = engine.as_mut() {
@@ -83,6 +83,7 @@ fn find_translations_dir_with_prefix(prefix: &str) -> Option<PathBuf> {
 
     None
 }
+
 fn find_translations_dir() -> Option<PathBuf> {
     use std::path::Path;
 
@@ -92,7 +93,8 @@ fn find_translations_dir() -> Option<PathBuf> {
 
     // Per-user install: $HOME/.local/share/rhesis/translations
     if let Ok(home) = env::var("HOME") {
-        if let Some(candidate) = find_translations_dir_with_prefix(&format!("{home}/.local/share")) {
+        if let Some(candidate) = find_translations_dir_with_prefix(&format!("{home}/.local/share"))
+        {
             return Some(candidate);
         }
     }
@@ -103,7 +105,7 @@ fn find_translations_dir() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    
+
     // Flatpak: the files are installed in /app
     if let Some(path) = find_translations_dir_with_prefix("/app/share") {
         return Some(path);

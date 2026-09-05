@@ -14,24 +14,61 @@ pub struct LanguageToolClient {
 }
 
 impl LanguageToolClient {
-    pub fn new_local(port: &str) -> Self {
+    pub fn new<T: AsRef<str>>(host: T, port: u16) -> LanguageToolClient {
+        let adress = Self::normalize_address(host.as_ref());
+
         Self {
-            address: format!("http://localhost:{port}"),
+            address: format!("{}:{}", adress, port),
             ..Default::default()
         }
     }
 
-    #[allow(dead_code)]
-    pub fn new_remote(address: &str) -> Self {
-        Self {
-            address: address.trim().trim_end_matches('/').into(),
-            ..Default::default()
+    pub fn update_address<T: AsRef<str>>(&mut self, host: T, port: u16) {
+        let adress = Self::normalize_address(host.as_ref());
+        self.address = format!("{}:{}", adress, port);
+    }
+
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Lightweight readiness probe: true when the server answers `POST /v2/check`.
+    pub async fn health_check(&self) -> bool {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        let form_data = [("text", "ok"), ("language", "en-US"), ("enabledOnly", "false")];
+
+        match client
+            .post(format!("{}/v2/check", self.address))
+            .form(&form_data)
+            .send()
+            .await
+        {
+            Ok(resp) => resp.status() == 200,
+            Err(_) => false,
+        }
+    }
+
+    /// reqwest needs a full URL; bare addresses get the http:// scheme
+    fn normalize_address(address: &str) -> String {
+        let address = address.trim().trim_end_matches('/');
+        if address.contains("://") {
+            address.to_string()
+        } else {
+            format!("http://{address}")
         }
     }
 }
 
 impl LanguageToolClient {
     pub fn set_colors(&mut self, rules: Vec<(QString, QString)>) {
+        log::debug!("applying {} color rules", rules.len());
         self.rules.clear();
         for (key, value) in rules {
             self.rules.insert(key.to_string(), value);
@@ -62,8 +99,6 @@ impl LanguageToolClient {
     pub async fn get_recommendation(&self, input: impl AsRef<str>) -> Vec<Recommendation> {
         let input = input.as_ref();
 
-        let mut results = Vec::new();
-
         let client = reqwest::Client::new();
 
         let form_data = [
@@ -78,44 +113,56 @@ impl LanguageToolClient {
             .send()
             .await;
 
-        if let Ok(response) = response {
-            if response.status() == 200 {
-                let body = response.json::<LanguageToolDto>().await;
-
-                if let Err(e) = body {
-                    dbg!("failed to get response: {:?}", e);
-                    return vec![];
-                }
-
-                let body = body.unwrap();
-                let lang_tag = body.language.code.to_uppercase();
-                results = body
-                    .matches
-                    .into_iter()
-                    .flat_map(|x| {
-                        let lang_tag = lang_tag.clone();
-                        x.replacements
-                            .into_iter()
-                            .map(move |replacement| Recommendation {
-                                color: self.select_color(
-                                    QString::from(x.rule.id.as_ref()),
-                                    QString::from(x.rule.category.id.as_ref()),
-                                ),
-                                range: Range {
-                                    start: x.offset,
-                                    length: x.length,
-                                },
-                                value: QString::from(replacement.value.as_ref()),
-                                category_id: QString::from(x.rule.category.id.as_ref()),
-                                rule_id: QString::from(x.rule.id.as_ref()),
-                                tooltip: QString::from(x.message.as_ref()),
-                                language: QString::from(&lang_tag),
-                            })
-                    })
-                    .collect::<Vec<_>>();
+        let response = match response {
+            Ok(response) => response,
+            Err(e) => {
+                // Transient: the worker retries on the next text change
+                log::warn!("LanguageTool request to {} failed: {e:?}", self.address);
+                return vec![];
             }
+        };
+
+        if response.status() != 200 {
+            log::warn!(
+                "LanguageTool returned status {} for {}",
+                response.status(),
+                self.address
+            );
+            return vec![];
         }
 
-        results
+        let body = match response.json::<LanguageToolDto>().await {
+            Ok(body) => body,
+            Err(e) => {
+                // The server replied, but with an unexpected shape
+                log::error!("failed to parse LanguageTool response: {e:?}");
+                return vec![];
+            }
+        };
+
+        let lang_tag = body.language.code.to_uppercase();
+        body.matches
+            .into_iter()
+            .flat_map(|x| {
+                let lang_tag = lang_tag.clone();
+                x.replacements
+                    .into_iter()
+                    .map(move |replacement| Recommendation {
+                        color: self.select_color(
+                            QString::from(x.rule.id.as_ref()),
+                            QString::from(x.rule.category.id.as_ref()),
+                        ),
+                        range: Range {
+                            start: x.offset,
+                            length: x.length,
+                        },
+                        value: QString::from(replacement.value.as_ref()),
+                        category_id: QString::from(x.rule.category.id.as_ref()),
+                        rule_id: QString::from(x.rule.id.as_ref()),
+                        tooltip: QString::from(x.message.as_ref()),
+                        language: QString::from(&lang_tag),
+                    })
+            })
+            .collect()
     }
 }

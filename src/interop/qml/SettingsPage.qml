@@ -64,7 +64,6 @@ Kirigami.Page {
             var item = colorRulesModel.get(i);
             rules[`${item.ruleType}:${item.ruleText}`] = item.ruleColor;
         }
-        console.log("Collected rules: ", JSON.stringify(rules));
         return rules;
     }
 

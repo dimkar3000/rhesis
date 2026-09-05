@@ -44,6 +44,7 @@ set(RHESIS_TRANSLATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/MainPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/SettingsPage.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/components/RuleListItem.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/components/ServerStatusIndicator.qml
 )
 
 file(GLOB RHESIS_TRANSLATION_FILES

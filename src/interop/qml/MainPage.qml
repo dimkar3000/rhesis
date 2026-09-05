@@ -16,6 +16,49 @@ Kirigami.Page {
 
     actions: [
         Kirigami.Action {
+            id: serverStatusAction
+            // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
+            // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed.
+            readonly property int statusStopped: 0
+            readonly property int statusStarting: 1
+            readonly property int statusStarted: 2
+            readonly property int statusFailed: 3
+            readonly property int workerStatus: helper ? helper.server_status : statusStopped
+            text: {
+                switch (workerStatus) {
+                case statusStarted:
+                    return qsTr("lt_started");
+                case statusStarting:
+                    return qsTr("lt_starting");
+                case statusFailed:
+                    return qsTr("lt_failed");
+                default:
+                    return qsTr("lt_stopped");
+                }
+            }
+            icon.name: {
+                switch (workerStatus) {
+                case statusStarted:
+                    return "emblem-ok";
+                case statusStarting:
+                    return "emblem-synchronizing";
+                case statusFailed:
+                    return "dialog-error";
+                default:
+                    return "dialog-error";
+                }
+            }
+            tooltip: (workerStatus === statusFailed && helper && helper.server_status_reason !== "") ? helper.server_status_reason : text
+            enabled: workerStatus === statusFailed
+            onTriggered: {
+                if (workerStatus === statusFailed && helper)
+                    helper.retry_server();
+            }
+            displayComponent: ServerStatusIndicator {
+                helper: mainPage.helper
+            }
+        },
+        Kirigami.Action {
             icon.name: "configure"
             text: qsTr("settings_action")
             onTriggered: applicationWindow().pageStack.layers.push(applicationWindow().settingsPage)
