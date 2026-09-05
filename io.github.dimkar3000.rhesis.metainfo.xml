@@ -42,48 +42,6 @@
   </screenshots>
   <releases>
   <!-- BEGIN GENERATED RELEASES - do not edit, from CHANGELOG.md -->
-    <release version="0.4.0" date="2026-09-05">
-      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.4.0</url>
-      <description>
-        <p>Version 0.4.0</p>
-        <ul>
-          <li>LanguageTool proper managment and status indicator in UI</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.3.0" date="2026-08-04">
-      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.3.0</url>
-      <description>
-        <p>Version 0.3.0</p>
-        <ul>
-          <li>add more discribution methods. Now we support Flatpak, Appimage, normal installations</li>
-          <li>impoved build time for local development</li>
-          <li>Updated file discovery path to reflect better on open desktop standards</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.2.0" date="2026-07-14">
-      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.2.0</url>
-      <description>
-        <p>Version 0.2.0</p>
-        <ul>
-          <li>small fixes</li>
-          <li>implemented custom colors for suggestion + started on translations</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.1.0" date="2026-07-04">
-      <url type="details">https://github.com/dimkar/rhesis/releases/tag/v0.1.0</url>
-      <description>
-        <p>Version 0.1.0</p>
-        <ul>
-          <li>Grammar, style, and spell checking for over 25 languages</li>
-          <li>Automatic language detection, just start typing</li>
-          <li>100 % offline, your writing stays private</li>
-          <li>Native KDE desktop experience</li>
-        </ul>
-      </description>
-    </release>
   <!-- END GENERATED RELEASES -->
   </releases>
   <content_rating type="oars-1.1"/>

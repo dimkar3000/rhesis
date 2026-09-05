@@ -17,6 +17,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags: generate-metainfo.py resolves historic
+          # release dates from git tags (CHANGELOG.md holds the content).
+          fetch-depth: 0
 
       - name: Allow git in container workspace
         # The KDE SDK container runs as a different UID than the checkout
@@ -107,8 +111,8 @@ jobs:
           cp scripts/runner.sh release/runner.sh
           ls -lh release/
 
-      - name: Generate release body from metainfo
-        run: python3 scripts/release-body.py io.github.dimkar3000.rhesis.metainfo.xml > release_body.md
+      - name: Generate release body from CHANGELOG
+        run: python3 scripts/release-body.py CHANGELOG.md "${{ github.ref_name }}" > release_body.md
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

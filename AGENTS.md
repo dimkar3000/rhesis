@@ -56,9 +56,10 @@ GitHub Actions workflow (`.github/workflows/build.yml`):
 
 ## Releasing
 
-- `CHANGELOG.md` is the single source of truth for release notes — never hand-edit the `<releases>` block in `io.github.dimkar3000.rhesis.metainfo.xml` (marked generated).
-- Before tagging: add a `## [X.Y.Z]` section to `CHANGELOG.md`, set the same version in `Cargo.toml`, run `python3 scripts/generate-metainfo.py` and commit the result (every build also regenerates it automatically).
+- `CHANGELOG.md` is the single source of truth for release notes — `## [X.Y.Z] - YYYY-MM-DD` sections with the pinned release date. The `<releases>` block in `io.github.dimkar3000.rhesis.metainfo.xml` is committed empty (markers only) and regenerated from the CHANGELOG on every build (`scripts/generate-metainfo.py`, dates from git tags with CHANGELOG dates as fallback) — never hand-edit it.
+- Before tagging: add the `## [X.Y.Z] - <date>` section, set the same version in `Cargo.toml`, and run `python3 scripts/generate-metainfo.py` to sanity-check the output (CI rebuilds it anyway; commit only the CHANGELOG/Cargo changes).
 - Tagging: final `vX.Y.Z` (CI fails the build if `Cargo.toml`/`CHANGELOG.md` disagree with the tag — check locally with `./scripts/check-versions.sh --tag vX.Y.Z`); pre-release `vX.Y.Z-*` embeds the pre-release version in build artifacts transiently and skips the version check. A commit tagged as both is treated as a release.
+- GitHub release notes come straight from the CHANGELOG (`scripts/release-body.py CHANGELOG.md <tag>`); CI checks out full history (`fetch-depth: 0`) so historic release dates resolve from git tags.
 
 ## QML language server
 
