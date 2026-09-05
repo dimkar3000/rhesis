@@ -43,6 +43,8 @@ RUST_BUILD_TYPE=release scripts/build-common.sh
 ## Translations
 
 Qt `.ts` files in `translations/`, compiled to `.qm` at build time. `qt6_add_translation` in `CMakeLists.txt`. Strings use `qsTr()` in QML.
+- Local builds run `lupdate` (new `qsTr()` strings land in the `.ts`) then `lrelease`; the build fails loudly if `lupdate` drops messages or a `.qm` comes out as a stub.
+- CI sets `SKIP_LUPDATE=1`: it only ever compiles the committed `.ts` files, never mutates them (the container's `lupdate` lacks QML support).
 
 ## CI/CD
 

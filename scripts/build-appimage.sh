@@ -142,6 +142,99 @@ bundle_qt() {
     fi
 }
 
+# Qt >= 6.5 loads libxcb-cursor (plus other xcb-util and XcbQpa libraries)
+# from libqxcb.so, but plain linuxdeploy only scans the main executable above
+# and never sees these manually copied plugins. Deploy every library the
+# bundled plugins AND bundled QML modules need (QML plugins like
+# libqtquickdialogsplugin.so have their own Qt-private dependencies, e.g.
+# libQt6QuickDialogs2QuickImpl, which fail the same way when resolved from a
+# different host Qt), except core system libraries and GPU drivers (those
+# must always come from the host) and the libraries that
+# remove_bundled_system_libs() deliberately drops afterwards. Target dir is
+# usr/lib, which AppRun puts on LD_LIBRARY_PATH.
+#
+# Pairing rule: libxkbcommon and libxkbcommon-x11 are lockstep-coupled (the
+# latter calls the former's internals) and must come from the SAME source.
+# Since remove_bundled_system_libs() drops libxkbcommon.so.0, this step must
+# not deploy libxkbcommon-x11.so.0 either — a mixed bundled/host pair
+# segfaults inside xkb_state_update_mask during xcb init. Both resolve from
+# the host instead.
+#
+# Same for the font stack below: it must stay host-paired with the host's
+# /etc/fonts, so libfontconfig/libfreetype/libexpat are excluded here and
+# deleted in remove_bundled_system_libs().
+#
+# A plugin whose dependencies cannot be resolved on the build host (e.g. an
+# optional kimg_* image format plugin needing an uninstalled codec library)
+# is removed again with a loud warning: Qt logs and continues without that
+# feature. The only exception is platforms/: without a working platform
+# plugin the application cannot start at all, so that fails the build.
+deploy_qt_plugin_deps() {
+    local lib_dir="$APPDIR/usr/lib"
+    mkdir -p "$lib_dir"
+
+    local deny_re='^(ld-linux|libc\.so|libm\.so|libpthread\.so|libdl\.so|librt\.so|libnsl\.so|libutil\.so|libresolv\.so|libnss_|libGL\.so|libEGL\.so|libGLX\.so|libGLdispatch\.so|libOpenGL\.so|libdrm\.so|libvulkan\.so|libgbm\.so|libxkbcommon\.so|libxkbcommon-x11\.so|libwayland-cursor\.so|libwayland-server\.so|libfontconfig\.so|libfreetype\.so|libexpat\.so)'
+
+    local fatal=0
+    local plugin
+    local -a scan_dirs=("$APPDIR/app/lib/qt6/plugins")
+    [ -d "$APPDIR/app/lib/qt6/qml" ] && scan_dirs+=("$APPDIR/app/lib/qt6/qml")
+    while IFS= read -r plugin; do
+        [ -n "$plugin" ] || continue
+        local line name rest path
+        local -a missing_names=()
+        local -a wanted_files=()
+        while IFS= read -r line; do
+            # strip leading whitespace; ldd prints e.g.
+            #   libfoo.so.0 => /path/libfoo.so.0 (0x...)
+            #   libfoo.so.0 => not found
+            #   /lib64/ld-linux-x86-64.so.2 (0x...)
+            #   linux-vdso.so.1 (0x...)
+            line="${line#"${line%%[![:space:]]*}"}"
+            case "$line" in
+                linux-vdso*|"") continue ;;
+            esac
+            if [[ "$line" == *"=> not found"* ]]; then
+                missing_names+=("${line%% *}")
+                continue
+            fi
+            [[ "$line" != *"=>"* ]] && continue
+            name="${line%% *}"
+            rest="${line#*=> }"
+            path="${rest%% *}"
+            [ -e "$lib_dir/$name" ] && continue
+            [[ "$name" =~ $deny_re ]] && continue
+            if [ -e "$APPDIR/app/lib/$name" ]; then
+                continue
+            fi
+            wanted_files+=("$name:$path")
+        done < <(ldd "$plugin" 2>/dev/null)
+
+        if [ "${#missing_names[@]}" -gt 0 ]; then
+            if [[ "$plugin" == */platforms/* ]]; then
+                echo "ERROR: $plugin needs missing libraries (${missing_names[*]}), and no platform means no application" >&2
+                fatal=1
+            else
+                echo "WARNING: dropping $plugin, its dependencies are not on the build host (${missing_names[*]})" >&2
+                rm -f "$plugin"
+            fi
+            continue
+        fi
+
+        local entry
+        for entry in ${wanted_files[@]+"${wanted_files[@]}"}; do
+            name="${entry%%:*}"
+            path="${entry#*:}"
+            cp -L "$path" "$lib_dir/$name"
+        done
+    done < <(find "${scan_dirs[@]}" \( -type f -o -type l \) -name "*.so*" 2>/dev/null || true)
+
+    if [ "$fatal" -ne 0 ]; then
+        echo "ERROR: Qt platform plugins have unresolved dependencies, refusing to build a broken AppImage" >&2
+        return 1
+    fi
+}
+
 write_apprun() {
     cat > "$APPDIR/AppRun" << 'APPRUN'
 #!/bin/bash
@@ -161,7 +254,15 @@ APPRUN
 
 remove_bundled_system_libs() {
     local lib_dir="$APPDIR/usr/lib"
-    for lib in libxkbcommon.so.0 libwayland-cursor.so.0 libwayland-server.so.0; do
+    # Dropped deliberately so the host versions are used instead:
+    # - wayland/xkbcommon: must stay paired with host counterparts (see above)
+    # - font stack (fontconfig/freetype/expat): an older bundled libfontconfig
+    #   cannot parse newer host /etc/fonts configs (e.g. xsi:nil syntax) and
+    #   spams warnings, while a newer host fontconfig against an older bundled
+    #   freetype risks missing symbols. The host triple is always consistent,
+    #   and any system able to run this AppImage (glibc floor) ships it.
+    for lib in libxkbcommon.so.0 libwayland-cursor.so.0 libwayland-server.so.0 \
+               libfontconfig.so.1 libfreetype.so.6 libexpat.so.1; do
         rm -f "$lib_dir/$lib"
     done
 }
@@ -192,6 +293,7 @@ main() {
     step "Creating AppDir" create_appdir
     step "Writing AppRun" write_apprun
     step "Bundling Qt and KDE dependencies" bundle_qt
+    step "Deploying Qt plugin dependencies" deploy_qt_plugin_deps
     step "Removing incompatible bundled system libraries" remove_bundled_system_libs
     step "Creating AppImage" create_appimage
 

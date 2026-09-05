@@ -14,6 +14,10 @@ jobs:
       options: --privileged
     env:
       APPIMAGE_EXTRACT_AND_RUN: 1
+      # Never mutate translation sources in clean-room builds: compile the
+      # committed .ts files only (the container's lupdate lacks QML support
+      # and would otherwise empty them). Local builds still run lupdate.
+      SKIP_LUPDATE: 1
 
     steps:
       - uses: actions/checkout@v4

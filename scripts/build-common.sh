@@ -95,11 +95,72 @@ regenerate_translations() {
     # Drop stale outputs so regeneration is unconditional, then refresh the
     # .ts sources from QML and recompile .qm next to them (.qm is gitignored;
     # local `cargo run` also picks these up via the ./translations fallback).
-    rm -f translations/*.qm "$BUILD_DIR/cmake-build/"*.qm
-    if ! "$lupdate_cmd" "${qml_files[@]}" -ts "${ts_files[@]}"; then
-        echo "Warning: lupdate reported errors; .ts files may be incomplete, continuing with lrelease" >&2
+    echo "Linguist tools: $("$lupdate_cmd" -version 2>&1 | head -1) / $("$lrelease_cmd" -version 2>&1 | head -1)"
+
+    # SKIP_LUPDATE=1 compiles the committed .ts sources without touching them.
+    # Used by CI: clean-room builds must never mutate sources, and some
+    # toolchains ship lupdate without QML support ("missing qml/javascript
+    # support"), which would otherwise empty every .ts file. Local builds
+    # keep running lupdate so newly added qsTr() strings end up in the .ts.
+    local skip_lupdate=false
+    case "${SKIP_LUPDATE:-}" in
+        1|true|yes) skip_lupdate=true ;;
+    esac
+    if [ "$skip_lupdate" = true ]; then
+        echo "Skipping lupdate (SKIP_LUPDATE set); compiling committed .ts sources only"
     fi
+
+    # Snapshot the .ts files first: a crashed lupdate can rewrite them with
+    # zero messages, and feeding that to lrelease ships header-only .qm
+    # stubs (~33 bytes) i.e. a keys-only UI with a successful build.
+    local backup_dir
+    backup_dir="$(mktemp -d)"
+    cp "${ts_files[@]}" "$backup_dir/"
+
+    rm -f translations/*.qm "$BUILD_DIR/cmake-build/"*.qm
+    if [ "$skip_lupdate" = false ]; then
+        if ! "$lupdate_cmd" "${qml_files[@]}" -ts "${ts_files[@]}"; then
+            echo "Warning: lupdate reported errors; verifying .ts files before continuing" >&2
+        fi
+    fi
+
+    # lupdate only ever adds messages (vanished entries are kept by default),
+    # so fewer messages than before means the run was destructive: restore
+    # the backups and fail loudly instead of shipping an untranslated app.
+    local ts before after
+    for ts in "${ts_files[@]}"; do
+        before=$(grep -c "<message>" "$backup_dir/$(basename "$ts")" || true)
+        after=$(grep -c "<message>" "$ts" || true)
+        if [ "$after" -lt "$before" ]; then
+            echo "ERROR: lupdate dropped $((before - after)) message(s) from $ts ($before -> $after); restored backup, aborting" >&2
+            cp "$backup_dir/"*.ts translations/
+            rm -rf "$backup_dir"
+            return 1
+        fi
+    done
+    rm -rf "$backup_dir"
+
     "$lrelease_cmd" "${ts_files[@]}"
+
+    # A header-only .qm stub is ~33 bytes while even a single-message catalog
+    # is ~85 bytes. Any .ts carrying messages must produce a real catalog;
+    # otherwise fail instead of shipping keys-only UI.
+    local qm messages qm_size
+    for ts in "${ts_files[@]}"; do
+        messages=$(grep -c "<message>" "$ts" || true)
+        qm="${ts%.ts}.qm"
+        if [ "$messages" -gt 0 ]; then
+            if [ ! -f "$qm" ]; then
+                echo "ERROR: lrelease produced no $qm for $ts ($messages message(s))" >&2
+                return 1
+            fi
+            qm_size=$(wc -c < "$qm")
+            if [ "$qm_size" -le 64 ]; then
+                echo "ERROR: $qm is only $qm_size bytes for $messages message(s); refusing to ship a stub catalog" >&2
+                return 1
+            fi
+        fi
+    done
 }
 
 # --- Main ---
