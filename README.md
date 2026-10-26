@@ -68,7 +68,7 @@ for a per-user install.
 - [x] Basic suggestions features 
 - [x] Flatpak distribution
 - [x] I18N - Localization beyond English
-- [ ] External LanguageTool server - Support for remote LanguageTool instances
+- [x] External LanguageTool server - Support for remote LanguageTool instances
 - [x] Better UI/UX - Improved syntax highlighting in the editor
 - [ ] Ability to run in the background as allow for the server to be used by other apps.
 - [x] Alternative distribution methods - Native packages beyond Flatpak
@@ -154,6 +154,12 @@ Downloads and prepares dependencies for local development:
 3. Downloads the `lid.176.ftz` language-identification model
 
 Run this from the project root before doing local development.
+
+### `scripts/run-language-tool.sh`
+
+Starts a standalone LanguageTool HTTP server on the given port (default 8081):
+`scripts/run-language-tool.sh [PORT]`. Useful for testing Rhesis against an
+"External (remote server)" instance without repackaging; stops with Ctrl+C.
 
 ### `scripts/create-jre.sh`
 

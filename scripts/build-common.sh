@@ -119,7 +119,11 @@ regenerate_translations() {
 
     rm -f translations/*.qm "$BUILD_DIR/cmake-build/"*.qm
     if [ "$skip_lupdate" = false ]; then
-        if ! "$lupdate_cmd" "${qml_files[@]}" -ts "${ts_files[@]}"; then
+        # -locations none keeps the .ts files stable: without it every QML edit
+        # rewrites all <location> line numbers, producing noisy diffs. Runtime
+        # lookup is by context + source key only; locations only feed the Qt
+        # Linguist GUI, which is not used in this project's workflow.
+        if ! "$lupdate_cmd" -locations none "${qml_files[@]}" -ts "${ts_files[@]}"; then
             echo "Warning: lupdate reported errors; verifying .ts files before continuing" >&2
         fi
     fi

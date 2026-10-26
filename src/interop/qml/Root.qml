@@ -22,9 +22,14 @@ Kirigami.ApplicationWindow {
 
     Settings {
         id: appSettings
+        // Server selection: true uses the bundled LanguageTool, false
+        // connects to an external LanguageTool instance.
         property bool embedded: true
+        // Port for the embedded server.
         property string port: "2689"
         property string defaultPort: "2689"
+        // Base URL of the external server (e.g. "http://192.168.1.10:8081").
+        property string externalAddress: ""
         property bool showTooltips: true
         property bool showDebugTooltips: true
         // Locale code (e.g. "el_GR"); empty means system locale.
@@ -62,7 +67,7 @@ Kirigami.ApplicationWindow {
     AsyncMessagingHelper {
         id: messagingHelper
         Component.onCompleted: {
-            messagingHelper.restart(appSettings.embedded, appSettings.port);
+            messagingHelper.restart(appSettings.embedded, appSettings.embedded ? appSettings.port : appSettings.externalAddress);
             messagingHelper.update_colors(appSettings.colorSettings);
         }
     }

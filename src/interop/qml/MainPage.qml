@@ -18,11 +18,15 @@ Kirigami.Page {
         Kirigami.Action {
             id: serverStatusAction
             // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
-            // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed.
+            // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
+            // 4 = Connecting, 5 = FailedToRespond.
             readonly property int statusStopped: 0
             readonly property int statusStarting: 1
             readonly property int statusStarted: 2
             readonly property int statusFailed: 3
+            readonly property int statusConnecting: 4
+            readonly property int statusFailedToRespond: 5
+            readonly property bool canRetry: workerStatus === statusFailed
             readonly property int workerStatus: helper ? helper.server_status : statusStopped
             text: {
                 switch (workerStatus) {
@@ -30,6 +34,10 @@ Kirigami.Page {
                     return qsTr("lt_started");
                 case statusStarting:
                     return qsTr("lt_starting");
+                case statusConnecting:
+                    return qsTr("lt_connecting");
+                case statusFailedToRespond:
+                    return qsTr("lt_failed_to_respond");
                 case statusFailed:
                     return qsTr("lt_failed");
                 default:
@@ -41,17 +49,16 @@ Kirigami.Page {
                 case statusStarted:
                     return "emblem-ok";
                 case statusStarting:
+                case statusConnecting:
                     return "emblem-synchronizing";
-                case statusFailed:
-                    return "dialog-error";
                 default:
                     return "dialog-error";
                 }
             }
-            tooltip: (workerStatus === statusFailed && helper && helper.server_status_reason !== "") ? helper.server_status_reason : text
-            enabled: workerStatus === statusFailed
+            tooltip: (canRetry && helper && helper.server_status_reason !== "") ? helper.server_status_reason : text
+            enabled: canRetry
             onTriggered: {
-                if (workerStatus === statusFailed && helper)
+                if (canRetry && helper)
                     helper.retry_server();
             }
             displayComponent: ServerStatusIndicator {

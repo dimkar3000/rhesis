@@ -140,8 +140,8 @@ async fn returns_recommendations_from_server() {
         3,
     )));
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("some misspelled text").await;
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let recommendations = client.get_recommendation("some misspelled text").await.unwrap();
 
     assert_eq!(recommendations.len(), 2, "one match with two replacements");
     let first = &recommendations[0];
@@ -173,8 +173,8 @@ async fn returns_empty_when_no_matches() {
     dto.matches.clear();
     let port = mock_server(json_response(&dto));
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("a perfect text").await;
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let recommendations = client.get_recommendation("a perfect text").await.unwrap();
 
     assert!(recommendations.is_empty());
 }
@@ -184,7 +184,7 @@ async fn applies_configured_rule_colors() {
     let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5);
     let port = mock_server(json_response(&dto));
 
-    let mut client = LanguageToolClient::new("127.0.0.1", port);
+    let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![
         (QString::from("CATEGORY:TYPOS"), QString::from("#33cc33")),
         (
@@ -193,7 +193,7 @@ async fn applies_configured_rule_colors() {
         ),
     ]);
 
-    let recommendations = client.get_recommendation("misspelled text").await;
+    let recommendations = client.get_recommendation("misspelled text").await.unwrap();
     assert_eq!(
         recommendations[0].color.to_string(),
         "#11bb22",
@@ -206,17 +206,17 @@ async fn falls_back_to_category_then_default_color() {
     let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5);
     let port = mock_server(json_response(&dto));
 
-    let mut client = LanguageToolClient::new("127.0.0.1", port);
+    let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![(
         QString::from("CATEGORY:TYPOS"),
         QString::from("#abcdab"),
     )]);
 
-    let recommendations = client.get_recommendation("misspelled text").await;
+    let recommendations = client.get_recommendation("misspelled text").await.unwrap();
     assert_eq!(recommendations[0].color.to_string(), "#abcdab");
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("misspelled text").await;
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let recommendations = client.get_recommendation("misspelled text").await.unwrap();
     assert_eq!(
         recommendations[0].color.to_string(),
         "#FF0000",
@@ -225,7 +225,7 @@ async fn falls_back_to_category_then_default_color() {
 }
 
 #[tokio::test]
-async fn returns_empty_on_error_status() {
+async fn errors_on_error_status() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
@@ -240,29 +240,38 @@ async fn returns_empty_on_error_status() {
         }
     });
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("text").await;
-    assert!(recommendations.is_empty());
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let error = client.get_recommendation("text").await.unwrap_err();
+    assert!(
+        error.contains("HTTP 500"),
+        "unexpected error message: {error}"
+    );
 }
 
 #[tokio::test]
-async fn returns_empty_on_garbage_response() {
+async fn errors_on_garbage_response() {
     let port = mock_server(b"this is not json".to_vec());
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("text").await;
-    assert!(recommendations.is_empty());
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let error = client.get_recommendation("text").await.unwrap_err();
+    assert!(
+        error.contains("unexpected response"),
+        "unexpected error message: {error}"
+    );
 }
 
 #[tokio::test]
-async fn returns_empty_when_server_unreachable() {
+async fn errors_when_server_unreachable() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("text").await;
-    assert!(recommendations.is_empty());
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let error = client.get_recommendation("text").await.unwrap_err();
+    assert!(
+        error.contains("no response"),
+        "unexpected error message: {error}"
+    );
 }
 
 #[tokio::test]
@@ -270,12 +279,12 @@ async fn update_address_switches_server() {
     let port_a = mock_server(json_response(&make_dto("RULE_A", "TYPOS", 1, 2)));
     let port_b = mock_server(json_response(&make_dto("RULE_B", "GRAMMAR", 3, 4)));
 
-    let mut client = LanguageToolClient::new("127.0.0.1", port_a);
-    let first = client.get_recommendation("text").await;
+    let mut client = LanguageToolClient::new(format!("127.0.0.1:{port_a}"));
+    let first = client.get_recommendation("text").await.unwrap();
     assert_eq!(first[0].rule_id.to_string(), "RULE_A");
 
-    client.update_address("127.0.0.1", port_b);
-    let second = client.get_recommendation("text").await;
+    client.update_address(format!("127.0.0.1:{port_b}"));
+    let second = client.get_recommendation("text").await.unwrap();
     assert_eq!(second[0].rule_id.to_string(), "RULE_B");
 }
 
@@ -286,8 +295,8 @@ async fn bare_hosts_get_http_scheme() {
     let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 0, 1);
     let port = mock_server(json_response(&dto));
 
-    let client = LanguageToolClient::new("127.0.0.1", port);
-    let recommendations = client.get_recommendation("text").await;
+    let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
+    let recommendations = client.get_recommendation("text").await.unwrap();
 
     assert!(!recommendations.is_empty());
     // One match with two replacements -> two recommendations sharing a range
@@ -308,19 +317,19 @@ async fn update_colors_takes_effect_immediately() {
     let dto = make_dto("RULE_X", "TYPOS", 2, 4);
     let port = mock_server(json_response(&dto));
 
-    let mut client = LanguageToolClient::new("127.0.0.1", port);
+    let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![(
         QString::from("RULE:RULE_X"),
         QString::from("#00ff00"),
     )]);
 
-    let recommendations = client.get_recommendation("text").await;
+    let recommendations = client.get_recommendation("text").await.unwrap();
     assert_eq!(recommendations[0].color.to_string(), "#00ff00");
 
     client.set_colors(vec![(
         QString::from("RULE:RULE_X"),
         QString::from("#ff0001"),
     )]);
-    let recommendations = client.get_recommendation("text").await;
+    let recommendations = client.get_recommendation("text").await.unwrap();
     assert_eq!(recommendations[0].color.to_string(), "#ff0001");
 }

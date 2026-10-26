@@ -14,22 +14,31 @@ pub struct LanguageToolClient {
 }
 
 impl LanguageToolClient {
-    pub fn new<T: AsRef<str>>(host: T, port: u16) -> LanguageToolClient {
-        let adress = Self::normalize_address(host.as_ref());
-
+    pub fn new<T: AsRef<str>>(base_url: T) -> LanguageToolClient {
         Self {
-            address: format!("{}:{}", adress, port),
+            address: Self::normalize_address(base_url.as_ref()),
             ..Default::default()
         }
     }
 
-    pub fn update_address<T: AsRef<str>>(&mut self, host: T, port: u16) {
-        let adress = Self::normalize_address(host.as_ref());
-        self.address = format!("{}:{}", adress, port);
+    /// Point the client at a new server base URL (`http://localhost:2689`,
+    /// `https://lt.example.com`, ...). Bare addresses get the `http://` scheme.
+    pub fn update_address<T: AsRef<str>>(&mut self, base_url: T) {
+        self.address = Self::normalize_address(base_url.as_ref());
     }
 
     pub fn address(&self) -> &str {
         &self.address
+    }
+
+    /// reqwest needs a full URL; bare addresses get the http:// scheme
+    pub fn normalize_address(address: &str) -> String {
+        let address = address.trim().trim_end_matches('/');
+        if address.contains("://") {
+            address.to_string()
+        } else {
+            format!("http://{address}")
+        }
     }
 
     /// Lightweight readiness probe: true when the server answers `POST /v2/check`.
@@ -56,16 +65,6 @@ impl LanguageToolClient {
         {
             Ok(resp) => resp.status() == 200,
             Err(_) => false,
-        }
-    }
-
-    /// reqwest needs a full URL; bare addresses get the http:// scheme
-    fn normalize_address(address: &str) -> String {
-        let address = address.trim().trim_end_matches('/');
-        if address.contains("://") {
-            address.to_string()
-        } else {
-            format!("http://{address}")
         }
     }
 }
@@ -100,7 +99,7 @@ impl LanguageToolClient {
         color
     }
 
-    pub async fn get_recommendation(&self, input: impl AsRef<str>) -> Vec<Recommendation> {
+    pub async fn get_recommendation(&self, input: impl AsRef<str>) -> Result<Vec<Recommendation>, String> {
         let input = input.as_ref();
 
         let client = reqwest::Client::new();
@@ -119,33 +118,26 @@ impl LanguageToolClient {
 
         let response = match response {
             Ok(response) => response,
+            // Transient: the worker marks the status and the next text change retries
             Err(e) => {
-                // Transient: the worker retries on the next text change
-                log::warn!("LanguageTool request to {} failed: {e:?}", self.address);
-                return vec![];
+                return Err(format!("no response from {}: {}", self.address, e));
             }
         };
 
         if response.status() != 200 {
-            log::warn!(
-                "LanguageTool returned status {} for {}",
-                response.status(),
-                self.address
-            );
-            return vec![];
+            return Err(format!("LanguageTool returned HTTP {}", response.status()));
         }
 
         let body = match response.json::<LanguageToolDto>().await {
             Ok(body) => body,
             Err(e) => {
                 // The server replied, but with an unexpected shape
-                log::error!("failed to parse LanguageTool response: {e:?}");
-                return vec![];
+                return Err(format!("unexpected response from {}: {}", self.address, e));
             }
         };
 
         let lang_tag = body.language.code.to_uppercase();
-        body.matches
+        let recommendations = body.matches
             .into_iter()
             .flat_map(|x| {
                 let lang_tag = lang_tag.clone();
@@ -167,6 +159,8 @@ impl LanguageToolClient {
                         language: QString::from(&lang_tag),
                     })
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        Ok(recommendations)
     }
 }

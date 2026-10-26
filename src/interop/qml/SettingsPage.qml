@@ -17,8 +17,15 @@ Kirigami.Page {
     property bool localTooltipSwitch: false
     property bool localDebugTooltipSwitch: false
     property string localPort: ""
+    property string localAddress: ""
     property string localLanguage: ""
-    property bool shouldRestartServer: localEmbedded !== settings.embedded || localPort !== settings.port
+    // The configuration of the selected server type, old vs. new.
+    property bool serverConfigChanged: {
+        var saved = localEmbedded ? settings.port : settings.externalAddress;
+        var current = localEmbedded ? localPort : localAddress;
+        return current !== saved;
+    }
+    property bool shouldRestartServer: localEmbedded !== settings.embedded || serverConfigChanged
 
     ListModel {
         id: colorRulesModel
@@ -27,6 +34,7 @@ Kirigami.Page {
     Component.onCompleted: {
         localEmbedded = settings.embedded;
         localPort = settings.port;
+        localAddress = settings.externalAddress;
         localTooltipSwitch = settings.showTooltips;
         localDebugTooltipSwitch = settings.showDebugTooltips;
         localLanguage = settings.language;
@@ -94,7 +102,26 @@ Kirigami.Page {
         }
     }
 
+    // Accepts "http://host:port", "host:port" (http is assumed) and
+    // scheme-less reverse-proxy URLs like "https://host/path".
+    function isValidExternalAddress(address) {
+        try {
+            let trimmed = address.trim();
+            if (trimmed === "") {
+                return false;
+            }
+            let url = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
+
+            // The scheme-less default hides the port, so only a hostname is
+            // mandatory.
+            return url.hostname !== "";
+        } catch (err) {
+            return false;
+        }
+    }
+
     property bool localPortValid: isValidLocalPort(portField.text)
+    property bool localAddressValid: isValidExternalAddress(addressField.text)
 
     function isFormSubmitable() {
         for (var i = 0; i < colorRulesModel.count; i++) {
@@ -103,20 +130,24 @@ Kirigami.Page {
             }
         }
 
-        // Embeded switch is changed
+        // Server type is changed
         if (localEmbedded !== settings.embedded) {
-            // switch off
-            if (!localEmbedded) {
+            if (localEmbedded && isValidLocalPort(localPort)) {
                 return true;
             }
-            if (localEmbedded && isValidLocalPort(localPort)) {
+            if (!localEmbedded && isValidExternalAddress(localAddress)) {
                 return true;
             }
 
             return false;
         }
 
-        if (localPort !== settings.port && isValidLocalPort(localPort)) {
+        if (localEmbedded && localPort !== settings.port && isValidLocalPort(localPort)) {
+            return true;
+        }
+
+        if (!localEmbedded && localAddress !== settings.externalAddress
+                && isValidExternalAddress(localAddress)) {
             return true;
         }
 
@@ -166,15 +197,12 @@ Kirigami.Page {
             enabled: isFormSubmitable()
             onTriggered: {
                 if (shouldRestartServer) {
-                    helper.restart(localEmbedded, localPort);
+                    helper.restart(localEmbedded, localEmbedded ? localPort : localAddress);
                 }
 
                 settings.embedded = localEmbedded;
-                if (!localEmbedded) {
-                    settings.port = "";
-                } else {
-                    settings.port = localPort;
-                }
+                settings.port = localPort;
+                settings.externalAddress = localAddress;
 
                 settings.showTooltips = localTooltipSwitch;
 
@@ -247,30 +275,42 @@ Kirigami.Page {
 
             Kirigami.Separator {
                 Kirigami.FormData.isSection: true
-                Kirigami.FormData.label: qsTr("embedded_lt_settings_section")
+                Kirigami.FormData.label: qsTr("lt_server_section")
             }
 
-            Controls.Switch {
-                id: embedSwitch
-                Kirigami.FormData.label: qsTr("enable_embed_label")
-                checked: localEmbedded
-                onToggled: localEmbedded = checked
+            ColumnLayout {
+                Kirigami.FormData.label: qsTr("server_type_label")
+                spacing: 0
+
+                Controls.RadioButton {
+                    text: qsTr("embedded_server_label")
+                    checked: localEmbedded
+                    onToggled: if (checked) localEmbedded = true
+                }
+
+                Controls.RadioButton {
+                    text: qsTr("external_server_label")
+                    checked: !localEmbedded
+                    onToggled: if (checked) localEmbedded = false
+                }
             }
 
             RowLayout {
+                // Configuration for the embedded server: it runs inside
+                // Rhesis, listening on this port.
+                visible: localEmbedded
                 Kirigami.FormData.label: qsTr("port_label")
 
                 Controls.TextField {
                     id: portField
                     Layout.fillWidth: true
-                    enabled: localEmbedded
                     placeholderText: "(2689)"
                     text: localPort
                     onTextChanged: localPort = text
 
                     background: Rectangle {
                         color: Kirigami.Theme.backgroundColor
-                        border.color: localPortValid || !localEmbedded ? ((!localPort && portField.focused) ? Kirigami.Theme.activeTextColor : Kirigami.Theme.textColor) : Kirigami.Theme.negativeTextColor
+                        border.color: localPortValid ? ((!localPort && portField.focused) ? Kirigami.Theme.activeTextColor : Kirigami.Theme.textColor) : Kirigami.Theme.negativeTextColor
                         border.width: 1
                         radius: 2
                     }
@@ -289,10 +329,38 @@ Kirigami.Page {
                 Controls.Button {
                     id: resetBtn
                     icon.name: "document-revert"
-                    enabled: localEmbedded && localPort !== settings.defaultPort
+                    enabled: localPort !== settings.defaultPort
                     onClicked: localPort = settings.defaultPort
                     Controls.ToolTip {
                         text: qsTr("reset_port_tooltip")
+                        visible: parent.hovered
+                    }
+                }
+            }
+
+            RowLayout {
+                // Configuration for the external server: Rhesis only talks
+                // to it over HTTP, nothing is spawned locally.
+                visible: !localEmbedded
+                Kirigami.FormData.label: qsTr("address_label")
+
+                Controls.TextField {
+                    id: addressField
+                    Layout.fillWidth: true
+                    inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                    placeholderText: qsTr("address_placeholder")
+                    text: localAddress
+                    onTextChanged: localAddress = text
+
+                    background: Rectangle {
+                        color: Kirigami.Theme.backgroundColor
+                        border.color: localAddressValid ? ((!localAddress && addressField.focused) ? Kirigami.Theme.activeTextColor : Kirigami.Theme.textColor) : Kirigami.Theme.negativeTextColor
+                        border.width: 1
+                        radius: 2
+                    }
+
+                    Controls.ToolTip {
+                        text: qsTr("address_tooltip")
                         visible: parent.hovered
                     }
                 }

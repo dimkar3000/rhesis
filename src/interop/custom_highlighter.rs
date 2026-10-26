@@ -30,10 +30,13 @@ impl CustomHighlighterRust {
 
     // Split a status update into the numeric QML code (see
     // `WorkerStatus::code`: 0 = Stopped, 1 = Starting, 2 = Started,
-    // 3 = Failed) plus the human-readable failure reason (empty unless Failed).
+    // 3 = Failed, 4 = Connecting, 5 = FailedToRespond) plus the
+    // human-readable failure reason (empty unless the status failed).
     fn status_to_qml(status: &WorkerStatus) -> (i32, QString) {
         let reason = match status {
-            WorkerStatus::Failed(reason) => QString::from(reason.as_str()),
+            WorkerStatus::Failed(reason) | WorkerStatus::FailedToRespond(reason) => {
+                QString::from(reason.as_str())
+            }
             _ => QString::default(),
         };
         (status.code(), reason)

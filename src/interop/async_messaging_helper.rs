@@ -25,7 +25,8 @@ pub struct AsyncMessagingHelperRust {
     pub worker_thread: Option<JoinHandle<()>>,
 
     // Mirrors `WorkerStatus` for QML (`qproperty` in bridge.rs).
-    // Status codes: 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed.
+    // Status codes: 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
+    // 4 = Connecting, 5 = FailedToRespond.
     pub server_status: i32,
     pub server_status_reason: QString,
 }
@@ -154,6 +155,12 @@ impl AsyncMessagingHelperRust {
         self.send(LanguageToolWorkerEvent::Retry);
     }
 
+    /// Reconfigure which LanguageTool server the worker talks to.
+    ///
+    /// `embedded` selects the built-in local server; `address` is then the
+    /// port to spawn it on. Otherwise `address` is the base URL of an
+    /// external LanguageTool instance to connect to instead (an empty
+    /// address just stops the current server).
     pub fn restart(&mut self, embedded: bool, address: &str) {
         log::info!("restart called, embedded={embedded}, address={address}");
 
@@ -167,6 +174,7 @@ impl AsyncMessagingHelperRust {
             }
         };
 
+        let address = address.trim();
         let event = if embedded {
             match address.parse() {
                 Ok(port) => LanguageToolWorkerEvent::RestartLocalServer(port),
@@ -175,9 +183,11 @@ impl AsyncMessagingHelperRust {
                     LanguageToolWorkerEvent::RestartLocalServer(2689)
                 }
             }
-        } else {
-            // Disabling the embedded server stops it.
+        } else if address.is_empty() {
+            // No external address configured: leave no server running.
             LanguageToolWorkerEvent::Stop
+        } else {
+            LanguageToolWorkerEvent::SwitchToRemoteServer(address.to_string())
         };
         if let Err(e) = sender.send(event) {
             log::warn!("failed to send restart event to the worker: {e:?}");

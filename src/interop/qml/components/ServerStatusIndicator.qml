@@ -8,13 +8,20 @@ Item {
 
     property var helper
     // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
-    // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed.
+    // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
+    // 4 = Connecting, 5 = FailedToRespond.
     readonly property int statusStopped: 0
     readonly property int statusStarting: 1
     readonly property int statusStarted: 2
     readonly property int statusFailed: 3
+    readonly property int statusConnecting: 4
+    readonly property int statusFailedToRespond: 5
     property int status: helper ? helper.server_status : statusStopped
     property string reason: helper ? helper.server_status_reason : ""
+    // Manual retry only makes sense when nothing retries on its own: a
+    // `FailedToRespond` outage already re-probes on the next typed request
+    // (and recovers automatically), so it gets no button.
+    readonly property bool canRetry: status === statusFailed
 
     implicitWidth: row.implicitWidth
     implicitHeight: row.implicitHeight
@@ -24,11 +31,12 @@ Item {
         case statusStarted:
             return Kirigami.Theme.positiveTextColor;
         case statusStarting:
+        case statusConnecting:
             return Kirigami.Theme.neutralTextColor;
-        case statusFailed:
-            return Kirigami.Theme.negativeTextColor;
-        default:
+        case statusStopped:
             return Kirigami.Theme.disabledTextColor;
+        default:
+            return Kirigami.Theme.negativeTextColor;
         }
     }
 
@@ -38,6 +46,10 @@ Item {
             return qsTr("lt_started");
         case statusStarting:
             return qsTr("lt_starting");
+        case statusConnecting:
+            return qsTr("lt_connecting");
+        case statusFailedToRespond:
+            return qsTr("lt_failed_to_respond");
         case statusFailed:
             return qsTr("lt_failed");
         default:
@@ -67,7 +79,7 @@ Item {
         }
 
         Controls.ToolButton {
-            visible: root.status === root.statusFailed
+            visible: root.canRetry
             icon.name: "view-refresh"
             text: qsTr("lt_retry")
             display: Controls.AbstractButton.IconOnly

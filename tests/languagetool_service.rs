@@ -4,7 +4,8 @@ use std::{
     net::TcpStream,
     path::Path,
     process::Command,
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicBool, Ordering},
+    sync::Arc,
     thread,
     time::Duration,
 };
@@ -127,8 +128,18 @@ fn assert_no_suggestion(handles: &WorkerHandles, timeout: Duration) {
 /// (status only) and for `get_recommendation` (which then yields an empty
 /// suggestion list but still delivers a `Suggestion` message).
 fn spawn_mock_server() -> (u16, thread::JoinHandle<()>) {
+    let (port, _, handle) = spawn_toggleable_mock_server();
+    (port, handle)
+}
+
+/// Same mock, but a flag decides whether requests succeed (200 + valid
+/// LanguageTool JSON) or fail (503). Lets a test simulate a server going
+/// down mid-session and coming back.
+fn spawn_toggleable_mock_server() -> (u16, Arc<AtomicBool>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock server");
     let port = listener.local_addr().unwrap().port();
+    let healthy = Arc::new(AtomicBool::new(true));
+    let flag = healthy.clone();
     let handle = thread::spawn(move || {
         for stream in listener.incoming() {
             let mut stream = match stream {
@@ -138,6 +149,12 @@ fn spawn_mock_server() -> (u16, thread::JoinHandle<()>) {
             let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
             let mut buf = [0u8; 4096];
             let _ = stream.read(&mut buf);
+            if !flag.load(Ordering::SeqCst) {
+                let _ = stream.write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                continue;
+            }
             // Minimal valid LanguageToolDto JSON would be ideal, but even an
             // empty object is fine: the client then returns [] yet still
             // sends a Suggestion message.
@@ -150,7 +167,7 @@ fn spawn_mock_server() -> (u16, thread::JoinHandle<()>) {
             let _ = stream.write_all(response.as_bytes());
         }
     });
-    (port, handle)
+    (port, healthy, handle)
 }
 
 fn kill(handles: &WorkerHandles) {
@@ -212,9 +229,8 @@ fn empty_and_whitespace_text_produce_no_suggestions() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port}"),
         ))
         .unwrap();
     assert!(
@@ -251,9 +267,8 @@ fn repeated_text_is_deduplicated() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port}"),
         ))
         .unwrap();
     assert!(wait_for_status(
@@ -293,9 +308,8 @@ fn suggestions_flow_against_mock_server() {
 
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port}"),
         ))
         .unwrap();
     assert!(wait_for_status(
@@ -348,9 +362,8 @@ fn stop_event_reports_stopped() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port}"),
         ))
         .unwrap();
     assert!(wait_for_status(
@@ -472,9 +485,8 @@ fn setport_while_started_restarts() {
 
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port_a,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port_a}"),
         ))
         .unwrap();
     assert!(wait_for_status(
@@ -487,9 +499,8 @@ fn setport_while_started_restarts() {
     // Point the client at the second mock; suggestions must keep flowing.
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::ChangeAddress(
-            "localhost".to_string(),
-            port_b,
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port_b}"),
         ))
         .unwrap();
     assert!(wait_for_status(
@@ -509,6 +520,115 @@ fn setport_while_started_restarts() {
         recv_suggestion(&handles, Duration::from_secs(10)).is_some(),
         "suggestions should flow after address change"
     );
+
+    kill(&handles);
+}
+
+#[test]
+fn remote_outage_flips_status_and_recovers() {
+    let (port, healthy, _mock) = spawn_toggleable_mock_server();
+    let handles = start_worker();
+
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
+            format!("localhost:{port}"),
+        ))
+        .unwrap();
+    assert!(
+        wait_for_status(
+            &handles,
+            |s| matches!(s, WorkerStatus::Started),
+            Duration::from_secs(10)
+        )
+        .is_some()
+    );
+
+    // A successful request keeps the status untouched.
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::UpdateSuggestions(QString::from(
+            "first text",
+        )))
+        .unwrap();
+    assert!(recv_suggestion(&handles, Duration::from_secs(10)).is_some());
+
+    // Server goes down: the next request must flip the status to
+    // FailedToRespond (the outage becomes visible in the top bar).
+    healthy.store(false, Ordering::SeqCst);
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::UpdateSuggestions(QString::from(
+            "second text while down",
+        )))
+        .unwrap();
+    let failed = wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::FailedToRespond(_)),
+        Duration::from_secs(10),
+    );
+    assert!(
+        failed.is_some(),
+        "a failing request while Started must flip to FailedToRespond"
+    );
+    let status = failed.unwrap();
+    assert!(
+        status.reason().contains("503"),
+        "the failure reason should mention the HTTP error: {status:?}"
+    );
+
+    // Manual retry while the server is still down: the re-connect fails and
+    // must land back in FailedToRespond (typing keeps retrying) instead of
+    // dead-ending in Stopped.
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::Retry)
+        .unwrap();
+    assert!(
+        wait_for_status(
+            &handles,
+            |s| matches!(s, WorkerStatus::Connecting),
+            Duration::from_secs(5)
+        )
+        .is_some(),
+        "Retry in remote mode should first report Connecting"
+    );
+    assert!(
+        wait_for_status(
+            &handles,
+            |s| matches!(s, WorkerStatus::FailedToRespond(_)),
+            Duration::from_secs(15)
+        )
+        .is_some(),
+        "a failed reconnect attempt must return to FailedToRespond, not Stopped"
+    );
+
+    // Server comes back: the next successful request recovers to Started.
+    healthy.store(true, Ordering::SeqCst);
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::UpdateSuggestions(QString::from(
+            "third text while up",
+        )))
+        .unwrap();
+    assert!(
+        wait_for_status(
+            &handles,
+            |s| matches!(s, WorkerStatus::Started),
+            Duration::from_secs(10)
+        )
+        .is_some(),
+        "a successful request must recover from FailedToRespond"
+    );
+
+    // Suggestions keep flowing after recovery.
+    handles
+        .event_sender
+        .send(LanguageToolWorkerEvent::UpdateSuggestions(QString::from(
+            "fourth text",
+        )))
+        .unwrap();
+    assert!(recv_suggestion(&handles, Duration::from_secs(10)).is_some());
 
     kill(&handles);
 }
