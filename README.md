@@ -65,13 +65,13 @@ Uninstall with `sudo rhesis --uninstall` for global installations or `rhesis --u
 for a per-user install.
 
 ## Completed/Pending Features
-- [x] Basic suggestions features 
+- [x] Basic suggestions features
 - [x] Flatpak distribution
 - [x] I18N - Localization beyond English
 - [x] External LanguageTool server - Support for remote LanguageTool instances
 - [x] Better UI/UX - Improved syntax highlighting in the editor
-- [ ] Ability to run in the background as allow for the server to be used by other apps.
 - [x] Alternative distribution methods - Native packages beyond Flatpak
+- [ ] Ability to run in the background, allowing the server to be used by other apps
 - [ ] Windows build?
 
 ## Local Development
@@ -112,21 +112,22 @@ manifest.
 
 ### CI/CD
 
-Two GitHub Actions workflows are provided:
+A single workflow, `.github/workflows/build.yml`, is triggered on
+version tags (`v*`) or manually:
 
-- **`build-flatpak.yml`** — triggered on version tags (`v*`) or manually.
-  Builds the flatpak and attaches it to the release.
-- **`docker-build.yml`** — triggered on changes to `Dockerfile` or
-  `requirements.txt`. Builds and pushes the CI container image to
-  `ghcr.io/<owner>/rhesis-ci:kde-6.10`.
+- Checks version consistency (`Cargo.toml`/`CHANGELOG.md` vs tag) for
+  final releases only, via `scripts/check-versions.sh`.
+- The tag format selects the build profile: `v*-*` (pre-release) →
+  `release-fast`, stable tag → `release`.
+- Builds all three distribution flavors — Flatpak, AppImage, and desktop
+  tarballs (global and `--local`) — plus `runner.sh`.
+- On version tags, everything is attached to the GitHub release, with
+  release notes generated from `CHANGELOG.md` (`scripts/release-body.py`).
 
-The CI uses a custom Docker image (`Dockerfile`) that pre-installs the
-flatpak SDK extensions and Python dependencies. To build and push it:
-
-```sh
-docker build -t ghcr.io/<owner>/rhesis-ci:kde-6.10 .
-docker push ghcr.io/<owner>/rhesis-ci:kde-6.10
-```
+The CI runs in a custom container image (`Dockerfile`, `kde-6.11` tag)
+pre-installed with the flatpak SDK extensions and appimage tooling.
+See [Building/Updating the CI container](#buildingupdating-the-ci-container)
+for how to build and push it.
 
 ### Testing
 
@@ -195,12 +196,13 @@ are checksummed for reproducibility.
 | `jre/` | Java | Trimmed JRE (48 MB, built by jlink at flatpak time) |
 | `server.properties` | config | LanguageTool config (fastText paths, port) |
 
-## Building/Updating the container used in CI/CD\
+## Building/Updating the CI container
 
 ```sh
-podman tag -t ghcr.io/dimkar3000/rhesis-ci:kde-6.10 .
-podman push ghcr.io/dimkar3000/rhesis-ci:kde-6.10
+podman build -t ghcr.io/dimkar3000/rhesis-ci:kde-6.11 .
+podman push ghcr.io/dimkar3000/rhesis-ci:kde-6.11
 ```
+
 ## Licensing
 
 - Rhesis — MIT
