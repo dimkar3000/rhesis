@@ -60,6 +60,16 @@ pub mod ffi {
 
         fn appSetWindowIcon(app: Pin<&mut QApplication>, path: &QString);
 
+        fn syncBackgroundBehavior();
+
+        fn setBackgroundBehavior(enabled: bool);
+
+        fn appHideRootWindow();
+
+        /// Show + raise + activate the main window; must be called on the
+        /// Qt thread (the single-instance "show" queue guarantees that).
+        fn appRaiseMainWindow();
+
         fn setupIconTheme();
 
         fn applyLanguage(dir: &QString, preferredLocale: &QString) -> bool;
@@ -98,6 +108,21 @@ pub mod ffi {
 
         #[qinvokable]
         fn retry_server(self: Pin<&mut AsyncMessagingHelper>);
+
+        /// Toggle tray-hosted background running. Calls into helper.h to keep
+        /// `quitOnLastWindowClosed` in sync with the user's choice: with
+        /// background mode on, hiding the last window must NOT quit the app.
+        #[qinvokable]
+        fn set_background(self: Pin<&mut AsyncMessagingHelper>, enabled: bool);
+
+        /// Whether an autostart-at-login entry currently exists.
+        #[qinvokable]
+        fn is_autostart(self: Pin<&mut AsyncMessagingHelper>) -> bool;
+
+        /// Create or remove the autostart entry; returns whether it worked
+        /// (sandbox permission failures surface as `false` here).
+        #[qinvokable]
+        fn set_autostart(self: Pin<&mut AsyncMessagingHelper>, enabled: bool) -> bool;
 
         #[qinvokable]
         fn text_area_changed(self: Pin<&mut AsyncMessagingHelper>, text: QString);
@@ -211,6 +236,25 @@ impl ffi::AsyncMessagingHelper {
 
     fn retry_server(self: Pin<&mut Self>) {
         self.rust_mut().retry_server();
+    }
+
+    fn set_background(self: Pin<&mut Self>, enabled: bool) {
+        log::info!("set_background({enabled})");
+        ffi::setBackgroundBehavior(enabled);
+    }
+
+    fn is_autostart(self: Pin<&mut Self>) -> bool {
+        crate::autostart::is_enabled()
+    }
+
+    fn set_autostart(self: Pin<&mut Self>, enabled: bool) -> bool {
+        match crate::autostart::set_enabled(enabled) {
+            Ok(()) => true,
+            Err(message) => {
+                log::error!("set_autostart({enabled}) failed: {message}");
+                false
+            }
+        }
     }
 
     fn text_area_changed(self: Pin<&mut Self>, text: QString) {

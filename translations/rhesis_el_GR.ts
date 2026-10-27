@@ -54,6 +54,34 @@
         <source>app_title</source>
         <translation>Rhesis</translation>
     </message>
+    <message>
+        <source>tray_show</source>
+        <translation>Εμφάνιση του Rhesis</translation>
+    </message>
+    <message>
+        <source>tray_start_server</source>
+        <translation>Εκκίνηση διακομιστή</translation>
+    </message>
+    <message>
+        <source>tray_stop_server</source>
+        <translation>Διακοπή διακομιστή</translation>
+    </message>
+    <message>
+        <source>tray_quit</source>
+        <translation>Τερματισμός</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_running</source>
+        <translation>LanguageTool σε λειτουργία στη διεύθυνση %1</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_stopped</source>
+        <translation>Ο LanguageTool δεν εκτελείται — %1</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_failed</source>
+        <translation>Αποτυχία εκκίνησης του LanguageTool</translation>
+    </message>
 </context>
 <context>
     <name>RuleListItem</name>
@@ -194,6 +222,26 @@
     <message>
         <source>system_default_label</source>
         <translation>Προεπιλογή συστήματος</translation>
+    </message>
+    <message>
+        <source>background_section</source>
+        <translation>Διακομιστής στο παρασκήνιο</translation>
+    </message>
+    <message>
+        <source>background_switch_label</source>
+        <translation>Διατήρηση σε λειτουργία στο παρασκήνιο</translation>
+    </message>
+    <message>
+        <source>background_tooltip</source>
+        <translation>Διατήρηση του ενσωματωμένου διακομιστή LanguageTool σε λειτουργία μετά το κλείσιμο του παραθύρου, για χρήση από άλλες εφαρμογές (http://127.0.0.1:%1/v2/check). Άνοιγμα του Rhesis ή τερματισμός από το εικονίδιο συστήματος.</translation>
+    </message>
+    <message>
+        <source>autostart_switch_label</source>
+        <translation>Αυτόματη εκκίνηση στην είσοδο</translation>
+    </message>
+    <message>
+        <source>autostart_tooltip</source>
+        <translation>Εκκίνηση του Rhesis κατά την είσοδο στο σύστημα. Με ενεργή τη φιλοξενία στο παρασκήνιο, ξεκινά κρυμμένος στο εικονίδιο συστήματος.</translation>
     </message>
 </context>
 </TS>

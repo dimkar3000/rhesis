@@ -7,6 +7,8 @@
 #include <QPalette>
 #include <QIcon>
 #include <QSettings>
+#include <QSystemTrayIcon>
+#include <QWindow>
 #include <QTranslator>
 #include <QFile>
 #include <QVariant>
@@ -44,6 +46,71 @@ inline void replaceTextInDocument(QTextDocument& doc, int64_t start, int64_t end
 
 inline void appSetWindowIcon(QApplication& app, const QString& path) {
   app.setWindowIcon(QIcon(path));
+}
+
+// Two entry points for the "keep running in the background" preference:
+//
+// - syncBackgroundBehavior() (startup): reads the persisted "background"
+//   QSettings key written by QML's Settings object (same store: org/app
+//   names are set before the engine loads).
+// - setBackgroundBehavior() (live Apply): the requested state flows in
+//   explicitly because QSettings syncs lazily (~500ms) — reading the file
+//   right after a QML write could race and see the stale value.
+//
+// With background running enabled, quitting on the last window being
+// hidden/closed must be disabled: hiding rhesis' window would otherwise
+// exit the whole app, killing the LanguageTool server other apps may use.
+inline void setBackgroundBehavior(bool enabled) {
+    if (auto* guiApp = qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        guiApp->setQuitOnLastWindowClosed(!enabled);
+        qInfo() << "background running:" << enabled
+                << "-> quitOnLastWindowClosed:" << !enabled;
+    }
+}
+
+inline void syncBackgroundBehavior() {
+    QSettings backgroundSettings;
+    const bool background =
+        backgroundSettings.value(QStringLiteral("background")).toBool();
+    setBackgroundBehavior(background);
+}
+
+// Hide every visible top-level window without closing it (the close handler
+// in Root.qml decides hide vs. quit). Used by the --hidden CLI flag and the
+// autostart entry so Rhesis starts straight into the tray, never flashing
+// the window at login. Requires BOTH the persisted background setting AND a
+// system tray: with either missing there would be no way to reopen the app
+// from the tray once hidden, so the window stays visible instead.
+inline void appHideRootWindow() {
+    QSettings backgroundSettings;
+    if (!backgroundSettings.value(QStringLiteral("background")).toBool()) {
+        qWarning() << "--hidden ignored: background hosting is disabled";
+        return;
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable()) {
+        qWarning() << "--hidden ignored: no system tray available";
+        return;
+    }
+    for (QWindow* window : QGuiApplication::topLevelWindows()) {
+        if (window->isVisible()) {
+            window->setVisible(false);
+            return;
+        }
+    }
+}
+
+// Raise the main window (any top-level window does; Rhesis has exactly one)
+// on the GUI thread. Called either from the event loop (single-instance
+// "show" requests arrive there via CxxQtThread::queue) or before the event
+// loop starts.
+inline void appRaiseMainWindow() {
+    const QList<QWindow*> topLevel = QGuiApplication::topLevelWindows();
+    if (!topLevel.isEmpty()) {
+        QWindow* window = topLevel.first();
+        window->setVisible(true);
+        window->raise();
+        window->requestActivate();
+    }
 }
 
 inline void setupIconTheme() {

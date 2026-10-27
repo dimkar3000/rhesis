@@ -71,7 +71,7 @@ for a per-user install.
 - [x] External LanguageTool server - Support for remote LanguageTool instances
 - [x] Better UI/UX - Improved syntax highlighting in the editor
 - [x] Alternative distribution methods - Native packages beyond Flatpak
-- [ ] Ability to run in the background, allowing the server to be used by other apps
+- [x] Ability to run in the background, allowing the server to be used by other apps
 - [ ] Windows build?
 
 ## Local Development
@@ -104,11 +104,31 @@ RUST_LOG=trace cargo run
 scripts/build-flatpak.sh
 ```
 
-The script generates `cargo-sources.json` from `Cargo.lock`, then runs
-`flatpak-builder`.  `cargo-sources.json` is not tracked in git — it is
-generated on every build.  LanguageTool, fastText, and the lid model
-are downloaded from their original sources at build time via the
-manifest.
+The build is **pinned to the Qt of the manifest's runtime**
+(`org.kde.Platform//6.11`).  The manifest ships the host-built binary
+as-is (`"buildsystem": "simple"`), so the artifacts must be compiled
+against exactly the Qt the runtime provides — a bundle built with a
+different Qt dies at startup with `version 'Qt_6.x' not found`.
+
+How the pin is achieved (chosen automatically from `runtime-version`
+in the manifest, the single source of truth):
+
+- **Host Qt matches the runtime** → artifacts are built locally with
+  `scripts/build-common.sh`.
+- **Host Qt differs (or is missing)** → artifacts are built inside an
+  `org.kde.Sdk//<runtime>` flatpak sandbox, which carries the dev tree
+  of exactly that Qt.  No container engine is needed: the sandbox runs
+  as your own user, Rust comes from the SDK's `rust-stable` extension,
+  and the cargo cache is shared through `~/.cargo`.  Stale
+  `build/cmake-build`/`build/target` output from the foreign Qt is
+  wiped first, so expect a full release rebuild in this mode.
+
+Once the artifacts are ready, the script generates `cargo-sources.json`
+from `Cargo.lock` and runs `flatpak-builder` (`cargo-sources.json` is
+not tracked in git — it is generated on every build).  LanguageTool,
+fastText, and the lid model are downloaded from their original sources
+at build time via the manifest.  The resulting bundle is exported to
+`build/artifacts/flatpak/rhesis.flatpak`.
 
 ### CI/CD
 
@@ -127,7 +147,9 @@ version tags (`v*`) or manually:
 The CI runs in a custom container image (`Dockerfile`, `kde-6.11` tag)
 pre-installed with the flatpak SDK extensions and appimage tooling.
 See [Building/Updating the CI container](#buildingupdating-the-ci-container)
-for how to build and push it.
+for how to build and push it. The image is only needed by CI — local
+flatpak builds pin against the flatpak SDK directly (see
+[Building](#building)), no container required.
 
 ### Testing
 
@@ -138,13 +160,25 @@ flatpak run --user --env=RUST_LOG=trace io.github.dimkar3000.rhesis
 The LanguageTool server output (both stdout and stderr) is forwarded to the
 Rust logging system under the `[LanguageTool]:` prefix.
 
+If startup logs `port 2689 is already in use`, a leftover LanguageTool
+instance is holding the port — clear it with
+`pkill -f "languagetool[-]server.jar"` (the bracketed pattern keeps
+pkill from matching itself), then start the app again.
+
 ## Scripts
 
 ### `scripts/build-flatpak.sh`
 
-Wrapper for building the flatpak. Installs the required flatpak runtimes
-and extensions, generates `cargo-sources.json` from `Cargo.lock`, then
-runs `flatpak-builder`.
+Wrapper for building the flatpak. Reads `runtime-version` from the
+manifest as its single source of truth, builds the artifacts against a
+matching Qt — locally when the host Qt matches, otherwise inside an
+`org.kde.Sdk` flatpak sandbox of the pinned runtime (no container
+required) — then installs the required flatpak runtimes, runs
+`flatpak-builder` and exports `build/artifacts/flatpak/rhesis.flatpak`.
+
+Useful options: `--verbose` (full output), `--clean` (rebuild artifacts
+from scratch), `--no-runtimes` (skip runtime install when already
+present), `--no-spinner` (plain output).
 
 ### `scripts/setup.sh`
 

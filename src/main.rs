@@ -33,6 +33,20 @@ fn run_ui() {
         Pin::as_mut(&mut app).set_application_name(&QString::from("Rhesis"));
     }
 
+    // Apply the persisted "keep running in the background" preference before
+    // anything creates windows: with it enabled, hiding the last window must
+    // not quit the whole app (the LanguageTool server stays up for other apps).
+    log::debug!("syncing background behavior from the persisted settings");
+    bridge::ffi::syncBackgroundBehavior();
+
+    // Single-instance guard: a second launch asks the running app to show
+    // its window and exits without creating any UI of its own. Deliberately
+    // runs before QApplication exists, so a secondary instance is cheap.
+    if !rhesis::single_instance::acquire() {
+        log::info!("another Rhesis instance is running; asked it to show its window");
+        return;
+    }
+
     bridge::ffi::setupIconTheme();
 
     let translations_dir = find_translations_dir();
@@ -63,6 +77,13 @@ fn run_ui() {
 
     if let Some(engine) = engine.as_mut() {
         engine.load(&ROOT_QML_FILE_PATH);
+    }
+
+    // Autostart CLI flag: hide the root window before the event loop starts.
+    // helper.h consults the persisted background setting itself: hiding with
+    // background running disabled would strand the app with no tray icon.
+    if env::args().any(|arg| arg == "--hidden") {
+        bridge::ffi::appHideRootWindow();
     }
 
     log::info!("Initialized");

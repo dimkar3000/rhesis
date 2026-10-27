@@ -14,6 +14,12 @@ Kirigami.Page {
     property AsyncMessagingHelper helper
     property LanguageManager langManager
     property bool localEmbedded: false
+    property bool localBackgroundSwitch: false
+    property bool localAutostartSwitch: false
+    // Read from the autostart files themselves (not the persisted settings):
+    // the source of truth can change outside the app, so the baseline is
+    // re-established on every page open.
+    property bool savedAutostart: helper.is_autostart()
     property bool localTooltipSwitch: false
     property bool localDebugTooltipSwitch: false
     property string localPort: ""
@@ -35,6 +41,7 @@ Kirigami.Page {
         localEmbedded = settings.embedded;
         localPort = settings.port;
         localAddress = settings.externalAddress;
+        localBackgroundSwitch = settings.background;
         localTooltipSwitch = settings.showTooltips;
         localDebugTooltipSwitch = settings.showDebugTooltips;
         localLanguage = settings.language;
@@ -151,6 +158,14 @@ Kirigami.Page {
             return true;
         }
 
+        if (localBackgroundSwitch !== settings.background) {
+            return true;
+        }
+
+        if (localAutostartSwitch !== savedAutostart) {
+            return true;
+        }
+
         if (localTooltipSwitch !== settings.showTooltips) {
             return true;
         }
@@ -203,6 +218,32 @@ Kirigami.Page {
                 settings.embedded = localEmbedded;
                 settings.port = localPort;
                 settings.externalAddress = localAddress;
+
+                // Persisted QSettings writes may lag behind (QSettings syncs
+                // lazily), so the C++ side receives the new state explicitly
+                // instead of re-reading the store and racing it.
+                settings.background = localBackgroundSwitch;
+                helper.set_background(localBackgroundSwitch);
+
+                // The autostart toggle touches real files, so it applies
+                // immediately; on failure the UI state reverts so the next
+                // Apply no longer claims a change that never happened.
+                if (localAutostartSwitch !== savedAutostart) {
+                    if (helper.set_autostart(localAutostartSwitch)) {
+                        savedAutostart = localAutostartSwitch;
+                    } else {
+                        console.warn(`failed to apply autostart state, keeping "${savedAutostart}"`);
+                        localAutostartSwitch = savedAutostart;
+                    }
+                }
+
+                // Hidden-in-tray sessions must never be stranded: when the
+                // tray icon is about to disappear (background hosting off,
+                // or an external server now selected), bring the window
+                // back so the user can still see and close the app.
+                if (!(settings.background && settings.embedded)) {
+                    applicationWindow().visible = true;
+                }
 
                 settings.showTooltips = localTooltipSwitch;
 
@@ -363,6 +404,38 @@ Kirigami.Page {
                         text: qsTr("address_tooltip")
                         visible: parent.hovered
                     }
+                }
+            }
+
+            Kirigami.Separator {
+                Kirigami.FormData.isSection: true
+                Kirigami.FormData.label: qsTr("background_section")
+            }
+
+            Controls.Switch {
+                id: backgroundSwitch
+                Kirigami.FormData.label: qsTr("background_switch_label")
+                // Only the embedded server can be hosted in the background;
+                // external servers are shared machines of their own.
+                enabled: localEmbedded
+                checked: localBackgroundSwitch
+                onToggled: localBackgroundSwitch = checked
+
+                Controls.ToolTip {
+                    text: qsTr("background_tooltip")
+                    visible: parent.hovered
+                }
+            }
+
+            Controls.Switch {
+                id: autostartSwitch
+                Kirigami.FormData.label: qsTr("autostart_switch_label")
+                checked: localAutostartSwitch
+                onToggled: localAutostartSwitch = checked
+
+                Controls.ToolTip {
+                    text: qsTr("autostart_tooltip")
+                    visible: parent.hovered
                 }
             }
 

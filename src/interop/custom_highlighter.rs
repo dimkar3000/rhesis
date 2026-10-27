@@ -58,6 +58,12 @@ impl CustomHighlighterRust {
         let helper = helper.get_mut();
         helper.ensure_worker_running();
 
+        // The single-instance runner dispatches "show" requests from later
+        // launches; it needs this Qt thread and only exists once QML is up.
+        if crate::single_instance::spawn_runner(helper_thread.clone()).is_none() {
+            log::debug!("single-instance runner not spawned");
+        }
+
         let receiver = match &helper.message_receiver {
             Some(receiver) => receiver.clone(),
             None => {

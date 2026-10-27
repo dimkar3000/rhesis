@@ -643,6 +643,29 @@ impl LanguageToolWorker {
         // until the verification settles instead of recursing.
         loop {
             self.terminate_child();
+
+            // Adoption: when something already listens on our port, don't
+            // spawn a competing server onto a busy socket. An existing,
+            // healthy LanguageTool (a background-hosted Rhesis instance, or
+            // a standalone server) is used as-is; anything else goes down
+            // the usual failure path, consuming a failure budget entry.
+            if !Self::port_is_free(self.local_port) {
+                client.update_address(&self.active_address());
+                if runtime.block_on(client.health_check()) {
+                    log::info!(
+                        "adopting LanguageTool already running on port {}",
+                        self.local_port
+                    );
+                    self.record_success();
+                    return;
+                }
+                self.record_failure(format!(
+                    "port {} is already in use and no LanguageTool answers there",
+                    self.local_port
+                ));
+                return;
+            }
+
             let child = match Self::spawn_server(self.local_port) {
                 Ok(c) => c,
                 Err(reason) => {
@@ -753,6 +776,14 @@ impl LanguageToolWorker {
         ))
     }
 
+    /// `true` while nothing listens on `port` on the loopback interface.
+    /// Used both for the fail-fast check before spawning and by the
+    /// adoption path in `start_local_server`: a bound port means someone
+    /// may already be running a LanguageTool to adopt.
+    fn port_is_free(port: u16) -> bool {
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    }
+
     /// Locate a usable LanguageTool installation: the first candidate directory
     /// that actually contains `languagetool-server.jar`. Packaged locations
     /// come first so system installs always win over development fallbacks.
@@ -800,9 +831,9 @@ impl LanguageToolWorker {
         // Fail fast with an actionable reason instead of burning the full
         // readiness timeout when something else already owns the port
         // (stale server, second app instance, ...).
-        if let Err(e) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+        if !Self::port_is_free(port) {
             return Err(format!(
-                "port {port} is already in use ({e}); stop the process holding it first"
+                "port {port} is already in use; stop the process holding it first"
             ));
         }
 
@@ -1019,5 +1050,26 @@ mod tests {
 
         assert!(!lt_dir.join("server.properties").exists());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn bound_port_reports_as_busy() {
+        // Grab any free ephemeral port and hold it: adoption must NOT
+        // consider it free while the socket stays open.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        assert!(!LanguageToolWorker::port_is_free(port));
+    }
+
+    #[test]
+    fn released_port_reports_as_free() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        // The bind in port_is_free re-claims the just-released port, so this
+        // also proves the helper itself works on a real bindable port.
+        assert!(LanguageToolWorker::port_is_free(port));
     }
 }

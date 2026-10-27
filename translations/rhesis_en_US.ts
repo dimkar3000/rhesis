@@ -54,6 +54,34 @@
         <source>app_title</source>
         <translation>Rhesis</translation>
     </message>
+    <message>
+        <source>tray_show</source>
+        <translation>Show Rhesis</translation>
+    </message>
+    <message>
+        <source>tray_start_server</source>
+        <translation>Start server</translation>
+    </message>
+    <message>
+        <source>tray_stop_server</source>
+        <translation>Stop server</translation>
+    </message>
+    <message>
+        <source>tray_quit</source>
+        <translation>Quit</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_running</source>
+        <translation>LanguageTool running at %1</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_stopped</source>
+        <translation>LanguageTool not running — %1</translation>
+    </message>
+    <message>
+        <source>tray_tooltip_failed</source>
+        <translation>LanguageTool failed to start</translation>
+    </message>
 </context>
 <context>
     <name>RuleListItem</name>
@@ -194,6 +222,26 @@
     <message>
         <source>system_default_label</source>
         <translation>System default</translation>
+    </message>
+    <message>
+        <source>background_section</source>
+        <translation>Background Server</translation>
+    </message>
+    <message>
+        <source>background_switch_label</source>
+        <translation>Keep running in the background</translation>
+    </message>
+    <message>
+        <source>background_tooltip</source>
+        <translation>Keep the embedded LanguageTool server running after closing the window, for other applications to use (http://127.0.0.1:%1/v2/check). Reopen Rhesis or quit from the tray icon.</translation>
+    </message>
+    <message>
+        <source>autostart_switch_label</source>
+        <translation>Start automatically at login</translation>
+    </message>
+    <message>
+        <source>autostart_tooltip</source>
+        <translation>Launch Rhesis when you log in. With background hosting on, it starts hidden in the tray.</translation>
     </message>
 </context>
 </TS>
