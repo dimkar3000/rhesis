@@ -47,6 +47,19 @@ fn run_ui() {
         return;
     }
 
+    // A relocated AppImage (moved, renamed for a version bump, re-homed by
+    // Gear Lever…) left the autostart entry pointing at the old path, so the
+    // login launch dies with systemd 203/EXEC — the file no longer exists.
+    // The running image is the source of truth for where it lives now, so
+    // every manual launch repoints the entry at itself; the next login works
+    // again. No-op for every other flavor (self_heal only acts under
+    // $APPIMAGE, never a mount path) and for entries that are already
+    // correct. A stale entry still cannot heal at login — the exec fails
+    // before any of our code runs — so the first launch after moving the
+    // file must be a manual one (toggling autostart on off→on would also
+    // rewrite it, but the heal makes that unnecessary).
+    rhesis::autostart::self_heal();
+
     bridge::ffi::setupIconTheme();
 
     let translations_dir = find_translations_dir();
@@ -79,9 +92,13 @@ fn run_ui() {
         engine.load(&ROOT_QML_FILE_PATH);
     }
 
-    // Autostart CLI flag: hide the root window before the event loop starts.
-    // helper.h consults the persisted background setting itself: hiding with
-    // background running disabled would strand the app with no tray icon.
+    // Autostart CLI flag: keep the app from flashing its window at login.
+    // Root.qml gates the root window's own visibility (hiddenLaunch &&
+    // tray availability), so for a hidden launch with a system tray the
+    // window is never mapped at all; this call then finds nothing to hide.
+    // It stays as the guard for other paths and for top-levels that end
+    // up visible anyway (helper.h refuses to hide when no tray exists —
+    // a hidden window without a reopen path must stay visible instead).
     if env::args().any(|arg| arg == "--hidden") {
         bridge::ffi::appHideRootWindow();
     }

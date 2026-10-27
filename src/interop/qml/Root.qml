@@ -17,6 +17,16 @@ Kirigami.ApplicationWindow {
 
     title: qsTr("app_title")
 
+    // A hidden launch must not flash the window at login: the mapping is
+    // gated here, before Qt ever shows the window. The alternative — letting
+    // it open and calling appHideRootWindow() right after engine load —
+    // arrives too late on X11: the map has already hit the screen, so the
+    // late hide shows as a one-frame flicker. With no system tray the
+    // window stays visible on purpose: the same stranding rule as the
+    // close handler below (a hidden app with no way back must not
+    // disappear into nowhere); appHideRootWindow enforces it identically.
+    visible: !(hiddenLaunch && trayIcon.available)
+
     // Hand the event to ours: closing hides instead of quitting when
     // background hosting is enabled, so the LanguageTool server stays up.
     // Hiding requires a working tray icon — without one a hidden app would
@@ -68,6 +78,16 @@ Kirigami.ApplicationWindow {
         root.requestActivate();
     }
 
+    // A launch with --hidden (the autostart entry's opener, or the CLI
+    // flag) lands in the tray: the tray icon is shown for hidden launches
+    // even when background hosting is off, because a hidden window with
+    // nowhere to reopen from would strand the app. The root window is
+    // never mapped for hidden launches when a system tray exists (the
+    // `visible` gate above) — mapping it and hiding it afterwards would
+    // flash on X11.
+    readonly property bool hiddenLaunch:
+        Qt.application.arguments.indexOf("--hidden") !== -1
+
     // Tray-hosted background running: while the embedded LanguageTool server
     // keeps running behind a closed window, the tray icon is the way back
     // in (and the only place to shut the hosted server down gracefully).
@@ -89,10 +109,9 @@ Kirigami.ApplicationWindow {
             || workerStatus === statusConnecting
             || workerStatus === statusFailedToRespond
 
-        // An embedded server is required for anything meaningful to sit in
-        // the background; without it the tray would strand a hidden window
-        // (external mode shares its own, remote server instead).
-        visible: appSettings.background && appSettings.embedded
+        // Background hosting offers the tray always; a hidden launch does
+        // too — the tray is the only way back in for a hidden window.
+        visible: (appSettings.background && appSettings.embedded) || hiddenLaunch
 
         // Must be a real "qrc:" URL — the ":/..." resource shorthand is not
         // resolved by Qt.labs.platform's icon loader, and the tray ends up

@@ -72,6 +72,7 @@ for a per-user install.
 - [x] Better UI/UX - Improved syntax highlighting in the editor
 - [x] Alternative distribution methods - Native packages beyond Flatpak
 - [x] Ability to run in the background, allowing the server to be used by other apps
+- [x] Start at login - creates an XDG autostart entry (Settings toggle; launches hidden to the tray)
 - [ ] Windows build?
 
 ## Local Development

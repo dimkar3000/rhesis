@@ -20,6 +20,10 @@ Kirigami.Page {
     // the source of truth can change outside the app, so the baseline is
     // re-established on every page open.
     property bool savedAutostart: helper.is_autostart()
+    // Seeded in Component.onCompleted. Guards the draft switches:
+    // programmatic checked changes still emit toggled(), so the seeding
+    // itself must not look like a user edit and re-write the state just read.
+    property bool pageInitDone: false
     property bool localTooltipSwitch: false
     property bool localDebugTooltipSwitch: false
     property string localPort: ""
@@ -45,7 +49,22 @@ Kirigami.Page {
         localTooltipSwitch = settings.showTooltips;
         localDebugTooltipSwitch = settings.showDebugTooltips;
         localLanguage = settings.language;
+        // The autostart switch must show the real state on open: its draft
+        // property starts false, so without this the toggle reads "not set"
+        // even when an autostart entry exists.
+        localAutostartSwitch = savedAutostart;
+        // Autostart implies background hosting: while the autostart state is
+        // on, the background switch is forced on and locked (the pairing is
+        // committed by Apply). This also heals the legacy mismatch of an old
+        // build having written autostart without background.
+        if (localAutostartSwitch) {
+            localBackgroundSwitch = true;
+        }
         loadColorRules();
+        // From here on, switch changes are user edits that join the draft and
+        // wait for the Apply button (the switches' onToggled handlers only
+        // write drafts — see isFormSubmitable and the Apply action).
+        pageInitDone = true;
     }
 
     // Display name in the language itself ("Ελληνικά (Ελλάδα)"). Stable
@@ -158,11 +177,12 @@ Kirigami.Page {
             return true;
         }
 
-        if (localBackgroundSwitch !== settings.background) {
-            return true;
-        }
-
-        if (localAutostartSwitch !== savedAutostart) {
+        // The background and autostart switches join the draft contract like
+        // everything else on this page: their draft (and, for autostart, the
+        // state read from the entry files on open) differs while a change
+        // waits for the Apply button to commit it.
+        if (localBackgroundSwitch !== settings.background
+                || localAutostartSwitch !== savedAutostart) {
             return true;
         }
 
@@ -219,30 +239,32 @@ Kirigami.Page {
                 settings.port = localPort;
                 settings.externalAddress = localAddress;
 
-                // Persisted QSettings writes may lag behind (QSettings syncs
-                // lazily), so the C++ side receives the new state explicitly
-                // instead of re-reading the store and racing it.
+                // Background hosting follows the draft; the runtime behavior
+                // mirrors the previously instant path. Hidden-in-tray
+                // sessions must never be stranded: when the tray icon is
+                // about to disappear, bring the window back so the app stays
+                // visible and closable. A hidden launch keeps its tray icon
+                // regardless.
                 settings.background = localBackgroundSwitch;
-                helper.set_background(localBackgroundSwitch);
+                helper.set_background(settings.background);
+                if (!(settings.background && settings.embedded) && !applicationWindow().hiddenLaunch) {
+                    applicationWindow().visible = true;
+                }
 
-                // The autostart toggle touches real files, so it applies
-                // immediately; on failure the UI state reverts so the next
-                // Apply no longer claims a change that never happened.
+                // The autostart draft only reaches the entry files here; on
+                // failure the draft reverts so the switch no longer claims a
+                // change that never happened. The saved-state check makes
+                // the commit a no-op when the toggle round-trips back. The
+                // checked write mirrors the revert: the user's click may
+                // have broken the checked binding.
                 if (localAutostartSwitch !== savedAutostart) {
                     if (helper.set_autostart(localAutostartSwitch)) {
                         savedAutostart = localAutostartSwitch;
                     } else {
                         console.warn(`failed to apply autostart state, keeping "${savedAutostart}"`);
                         localAutostartSwitch = savedAutostart;
+                        autostartSwitch.checked = savedAutostart;
                     }
-                }
-
-                // Hidden-in-tray sessions must never be stranded: when the
-                // tray icon is about to disappear (background hosting off,
-                // or an external server now selected), bring the window
-                // back so the user can still see and close the app.
-                if (!(settings.background && settings.embedded)) {
-                    applicationWindow().visible = true;
                 }
 
                 settings.showTooltips = localTooltipSwitch;
@@ -413,28 +435,50 @@ Kirigami.Page {
             }
 
             Controls.Switch {
-                id: backgroundSwitch
-                Kirigami.FormData.label: qsTr("background_switch_label")
-                // Only the embedded server can be hosted in the background;
-                // external servers are shared machines of their own.
-                enabled: localEmbedded
-                checked: localBackgroundSwitch
-                onToggled: localBackgroundSwitch = checked
+                id: autostartSwitch
+                Kirigami.FormData.label: qsTr("autostart_switch_label")
+                checked: localAutostartSwitch
+                onToggled: {
+                    if (!pageInitDone) {
+                        return;
+                    }
+                    // Draft only: the entry files get written by Apply. While
+                    // the autostart draft is enabled, background hosting is
+                    // forced on and its switch stays locked — a hidden-at-
+                    // login app must keep hosting/holding the tray state.
+                    // Unchecking releases the lock, keeping the forced value
+                    // for the user to adjust.
+                    localAutostartSwitch = checked;
+                    if (checked) {
+                        localBackgroundSwitch = true;
+                    }
+                }
 
                 Controls.ToolTip {
-                    text: qsTr("background_tooltip")
+                    text: qsTr("autostart_tooltip")
                     visible: parent.hovered
                 }
             }
 
             Controls.Switch {
-                id: autostartSwitch
-                Kirigami.FormData.label: qsTr("autostart_switch_label")
-                checked: localAutostartSwitch
-                onToggled: localAutostartSwitch = checked
+                id: backgroundSwitch
+                Kirigami.FormData.label: qsTr("background_switch_label")
+                // Only the embedded server can be hosted in the background;
+                // external servers are shared machines of their own. While
+                // autostart is on, the pairing locks the switch regardless.
+                enabled: localEmbedded && !localAutostartSwitch
+                checked: localBackgroundSwitch
+                onToggled: {
+                    if (!pageInitDone) {
+                        return;
+                    }
+                    // Draft only: settings.background and the host behavior
+                    // are committed by Apply (see the Apply action).
+                    localBackgroundSwitch = checked;
+                }
 
                 Controls.ToolTip {
-                    text: qsTr("autostart_tooltip")
+                    text: qsTr("background_tooltip")
                     visible: parent.hovered
                 }
             }

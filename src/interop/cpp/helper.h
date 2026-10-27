@@ -76,17 +76,14 @@ inline void syncBackgroundBehavior() {
 }
 
 // Hide every visible top-level window without closing it (the close handler
-// in Root.qml decides hide vs. quit). Used by the --hidden CLI flag and the
-// autostart entry so Rhesis starts straight into the tray, never flashing
-// the window at login. Requires BOTH the persisted background setting AND a
-// system tray: with either missing there would be no way to reopen the app
-// from the tray once hidden, so the window stays visible instead.
+// in Root.qml decides hide vs. quit). Used by the --hidden CLI flag so
+// Rhesis starts straight into the tray. The primary mechanism for hidden
+// launches is Root.qml's `visible` gate — the window is never mapped at
+// all, and hiding an already-mapped window would only flash on X11. This
+// call remains for anything that ends up visible regardless. It requires
+// a system tray: without one the window stays visible, because hiding it
+// would strand the app (Root.qml's stranding rule mirrors this).
 inline void appHideRootWindow() {
-    QSettings backgroundSettings;
-    if (!backgroundSettings.value(QStringLiteral("background")).toBool()) {
-        qWarning() << "--hidden ignored: background hosting is disabled";
-        return;
-    }
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         qWarning() << "--hidden ignored: no system tray available";
         return;

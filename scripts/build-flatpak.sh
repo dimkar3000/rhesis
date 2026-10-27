@@ -95,6 +95,26 @@ build_artifacts_sdk() {
     rm -rf "$build_root"
     flatpak build-init "$build_root" io.github.dimkar3000.rhesis "org.kde.Sdk" "org.kde.Platform" "$rt"
 
+    # The Sdk sandbox carries no OpenJDK: nothing on its PATH provides jlink,
+    # and the flatpak SDK refs installed above never install one. The trimmed
+    # JRE is part of the artifacts every build makes, so mirror the host JDK
+    # into the build tree — the sandbox sees the same absolute path through
+    # the $PROJECT_DIR grant below — and build-common's JRE step (which
+    # prefers JAVA_HOME over `which java`) finds it. Copy dies after the
+    # artifacts are built; the trimmed JRE stays.
+    local host_jdk_dir
+    if [ -n "${JAVA_HOME:-}" ]; then
+        host_jdk_dir="$JAVA_HOME"
+    else
+        host_jdk_dir="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+    fi
+    if [ ! -x "$host_jdk_dir/bin/jlink" ]; then
+        echo "Error: JDK not found on the host either; install OpenJDK 17+ (jlink needed) for the trimmed JRE." >&2
+        exit 1
+    fi
+    rm -rf "$BUILD_DIR/host-jdk"
+    cp -a "$host_jdk_dir" "$BUILD_DIR/host-jdk"
+
     echo "Pinned build: launching the org.kde.Sdk//$rt sandbox ..."
     echo "Pinned build: (it starts by wiping build/cmake-build and build/target — stale foreign-Qt fingerprints; expect quiet minutes) ..."
 
@@ -108,6 +128,7 @@ build_artifacts_sdk() {
         --env=BUILD_COMMON_ARGS="${COMMON_ARGS[*]}" \
         --env=SKIP_LUPDATE=1 \
         --env=RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-}" \
+        --env=JAVA_HOME="$BUILD_DIR/host-jdk" \
         "$build_root" sh -c '
             export PATH="$PATH:/usr/lib/sdk/rust-stable/bin"
             export LANG=C.UTF-8
@@ -117,6 +138,7 @@ build_artifacts_sdk() {
             echo "[pinned] caches wiped; running build-common ..."
             ./scripts/build-common.sh ${BUILD_COMMON_ARGS}
         '
+    rm -rf "$BUILD_DIR/host-jdk"
 }
 
 # --- Main ---

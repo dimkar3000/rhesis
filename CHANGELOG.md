@@ -2,10 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-10-28
+- fix: background and autostart switches wait for the Apply button like the other settings
+- fix: enabling autostart also enables and locks background hosting until autostart is turned off
+- fix: installs left with autostart on but background off get paired on the next Apply
+- chore: settings list the autostart switch above the background switch
+- chore: flatpak builds pinned to the runtime Qt mirror a host JDK into the sandbox for the trimmed JRE
+
 ## [0.5.0] - 2026-10-27
 - feat: support external language server
 - chore: update Readme
 - feat: run in the background
+- fix: no window flash for hidden-to-tray launches
+- fix: AppImage autostart follows the image if it is moved or renamed
+- fix: app icon missing in Discover's app listing
 
 ## [0.4.0] - 2026-09-05
 - fix: server will always be killed before terminating the app

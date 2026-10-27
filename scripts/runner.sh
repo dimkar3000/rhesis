@@ -6,10 +6,17 @@
 # default; the same file also acts as the installer:
 #
 #   rhesis            - runs the application
+#   rhesis --hidden   - runs it hidden to the tray (how the login autostart
+#                       entry launches it; needs a system tray, otherwise
+#                       the window opens normally)
 #   rhesis --install [global|local]  - installs; when no location is given,
 #                       asks global/local and defaults to global. Finds the
 #                       release archive and extracts it
-#   rhesis --uninstall- removes all Rhesis files and itself
+#   rhesis --uninstall            - removes all Rhesis files and itself
+#   rhesis --help                 - prints this help
+#
+# Any other argument is unexpected: it prints the help and exits with an
+# error instead of being forwarded anywhere.
 #
 # All Rhesis files live in a single folder (/usr/share/rhesis for a global
 # install, ~/.local/share/rhesis for a per-user install): binaries, bundled
@@ -31,6 +38,25 @@
 
 set -e
 
+usage() {
+    cat <<EOF
+Usage: ${0##*/} [OPTION]
+
+Runs Rhesis when called without an option.
+
+Options:
+  --hidden                  Run hidden to the tray (used by the login
+                            autostart entry; requires a system tray).
+  --install [global|local]  Install Rhesis and create the application-menu
+                            entry; asks for the location and defaults to
+                            global when omitted.
+  --uninstall               Remove the Rhesis files and this launcher.
+  -h, --help                Show this help and exit.
+
+Any other argument is unexpected and is rejected with this help.
+EOF
+}
+
 uninstall() {
     echo "Removing Rhesis files..."
     rm -rf "$PREFIX"
@@ -40,6 +66,16 @@ uninstall() {
     else
         rm -f /usr/share/applications/io.github.dimkar3000.rhesis.desktop
     fi
+    # The autostart entry is written by the app (Settings toggle), but one
+    # left behind by THIS flavor would keep failing at every login (systemd
+    # 203/EXEC once the launcher is gone). Remove it only when its Exec=
+    # points at this launcher: entries of other flavors (flatpak run ...)
+    # survive a native uninstall.
+    autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/io.github.dimkar3000.rhesis.desktop"
+    if [ -f "$autostart" ] && \
+       grep -Fqs "Exec=$SCRIPT_DIR/$(basename "$0") --hidden" "$autostart"; then
+        rm -f "$autostart"
+    fi
     echo "Rhesis uninstalled."
 }
 
@@ -47,19 +83,24 @@ install_desktop_entry() {
     # $1 = global|local, $2 = payload dir (the rhesis folder). Creates the
     # application-menu entry in the standard XDG applications directory,
     # rewriting Icon= to an absolute path into the rhesis folder (the icon is
-    # not part of an icon theme).
-    local apps_dir icon src
+    # not part of an icon theme) and Exec= to this launcher's absolute path:
+    # menus resolve bare Exec= names only through the session PATH, which
+    # misses ~/.local/bin (rooted user-installs would never launch).
+    local apps_dir icon exec_path src
     if [ "$1" = "global" ]; then
         apps_dir="/usr/share/applications"
         icon="$2/io.github.dimkar3000.rhesis.png"
+        exec_path="/usr/bin/rhesis"
     else
         apps_dir="${HOME:-}/.local/share/applications"
         icon="$2/io.github.dimkar3000.rhesis.png"
+        exec_path="${HOME:-}/.local/bin/rhesis"
     fi
     src="$2/io.github.dimkar3000.rhesis.desktop"
     [ -f "$src" ] || return 0
     mkdir -p "$apps_dir"
-    sed "s|^Icon=.*|Icon=$icon|" "$src" > "$apps_dir/io.github.dimkar3000.rhesis.desktop"
+    sed -e "s|^Icon=.*|Icon=$icon|" -e "s|^Exec=.*|Exec=$exec_path|" \
+        "$src" > "$apps_dir/io.github.dimkar3000.rhesis.desktop"
 }
 
 find_archive() {
@@ -166,57 +207,82 @@ install() {
     fi
 }
 
+launch() {
+    # $1 = normal|hidden. Resolves the install PREFIX for this launcher's
+    # location and execs the payload. Beyond starting the binary, the
+    # wrapper puts the payload's bin/ first on PATH so the embedded server
+    # can find the bundled java/fasttext.
+    if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
+        PREFIX="${HOME}/.local/share/rhesis"
+    elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
+        PREFIX="/usr/share/rhesis"
+    elif [ -x "${HOME:-}/.local/share/rhesis/bin/rhesis" ]; then
+        # Not installed as `rhesis` (e.g. run from the repo):
+        # fall back to an existing per-user install so
+        # ./scripts/runner.sh keeps working during development.
+        PREFIX="${HOME}/.local/share/rhesis"
+    elif [ -x /usr/share/rhesis/bin/rhesis ]; then
+        PREFIX="/usr/share/rhesis"
+    else
+        echo "Error: Rhesis is not installed. Run: ${0##*/} --install" >&2
+        exit 1
+    fi
+
+    if [ ! -x "$PREFIX/bin/rhesis" ]; then
+        echo "Rhesis is not installed yet. Run: ${0##*/} --install" >&2
+        exit 1
+    fi
+    export PATH="$PREFIX/bin:${PATH}"
+    if [ "$1" = "hidden" ]; then
+        exec "$PREFIX/bin/rhesis" --hidden
+    fi
+    exec "$PREFIX/bin/rhesis"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
 case "${1:-}" in
     --install)
         tmp="$(mktemp -d /tmp/rhesis-install.XXXXXX)"
         trap 'rm -rf "$tmp"' EXIT HUP INT TERM
         install "${2:-}"
         ;;
+    --uninstall|uninstall)
+        # Refuse to uninstall from an unrecognized location: the
+        # uninstaller deletes this script itself ($0), so running it
+        # from a random copy (e.g. the repo) would delete the copy
+        # instead of the installed rhesis.
+        if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
+            PREFIX="${HOME}/.local/share/rhesis"
+            uninstall
+        elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
+            PREFIX="/usr/share/rhesis"
+            uninstall
+        else
+            echo "Error: uninstall must be run from the installed rhesis script" >&2
+            echo "       run: ${HOME:-}/.local/bin/rhesis --uninstall (or /usr/bin/rhesis --uninstall)" >&2
+            exit 1
+        fi
+        ;;
+    --help|-h)
+        usage
+        ;;
+    "")
+        launch normal
+        ;;
+    --hidden)
+        # The login autostart contract: autostart.rs writes
+        # Exec=<launcher> --hidden. Accept only the bare flag.
+        if [ "$#" -ne 1 ]; then
+            echo "Error: unrecognized argument: $2" >&2
+            usage >&2
+            exit 1
+        fi
+        launch hidden
+        ;;
     *)
-        SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-
-        case "${1:-}" in
-            --uninstall|uninstall)
-                # Refuse to uninstall from an unrecognized location: the
-                # uninstaller deletes this script itself ($0), so running it
-                # from a random copy (e.g. the repo) would delete the copy
-                # instead of the installed rhesis.
-                if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
-                    PREFIX="${HOME}/.local/share/rhesis"
-                    uninstall
-                elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
-                    PREFIX="/usr/share/rhesis"
-                    uninstall
-                else
-                    echo "Error: uninstall must be run from the installed rhesis script" >&2
-                    echo "       run: ${HOME:-}/.local/bin/rhesis --uninstall (or /usr/bin/rhesis --uninstall)" >&2
-                    exit 1
-                fi
-                ;;
-            *)
-                if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
-                    PREFIX="${HOME}/.local/share/rhesis"
-                elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
-                    PREFIX="/usr/share/rhesis"
-                elif [ -x "${HOME:-}/.local/share/rhesis/bin/rhesis" ]; then
-                    # Not installed as `rhesis` (e.g. run from the repo):
-                    # fall back to an existing per-user install so
-                    # ./scripts/runner.sh keeps working during development.
-                    PREFIX="${HOME}/.local/share/rhesis"
-                elif [ -x /usr/share/rhesis/bin/rhesis ]; then
-                    PREFIX="/usr/share/rhesis"
-                else
-                    echo "Error: Rhesis is not installed. Run: ${0##*/} --install" >&2
-                    exit 1
-                fi
-
-                if [ ! -x "$PREFIX/bin/rhesis" ]; then
-                    echo "Rhesis is not installed yet. Run: ${0##*/} --install" >&2
-                    exit 1
-                fi
-                export PATH="$PREFIX/bin:${PATH}"
-                exec "$PREFIX/bin/rhesis" "$@"
-                ;;
-        esac
+        echo "Error: unrecognized argument: $1" >&2
+        usage >&2
+        exit 1
         ;;
 esac

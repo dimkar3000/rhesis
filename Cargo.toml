@@ -1,7 +1,7 @@
 [package]
 name = "rhesis"
-version = "0.5.0"
-authors = [ "dimkar <dimkar3000@gmail.com>" ]
+version = "0.5.1"
+authors = ["dimkar <dimkar3000@gmail.com>"]
 edition = "2021"
 license = "MIT"
 
@@ -17,8 +17,17 @@ lazy_static = "1.5.0"
 log = "0.4.33"
 reqwest = { version = "0.13.4", features = ["json", "form"] }
 serde = { version = "1.0.228", features = ["serde_derive"] }
+# The fake completion provider (RHESIS_FAKE_LT) parses recorded fixtures,
+# so this is a runtime dependency, not just a dev one.
+serde_json = "1.0"
 
 tokio = { version = "1.52.3", features = ["full", "sync"] }
+
+[features]
+# UI-test harness only: adds the Qt Quick Test runner binary with its
+# QtQuickTest linkage. Release/default builds never enable it, so shipped
+# binaries keep the exact dependencies they had before.
+ui-harness = []
 
 [profile.release]
 opt-level = 3
@@ -35,8 +44,7 @@ debug = true
 
 [build-dependencies]
 # The link_qt_object_files feature is required for statically linking Qt 6.
-cxx-qt-build = { version = "0.9.0", features = [ "link_qt_object_files" ] }
+cxx-qt-build = { version = "0.9.0", features = ["link_qt_object_files"] }
 glob = "0.3.3"
 
 [dev-dependencies]
-serde_json = "1.0"
