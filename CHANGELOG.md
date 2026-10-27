@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-10-27
+- feat: support external language server
+- chore: update Readme
+- feat: run in the background
+
 ## [0.4.0] - 2026-09-05
 - fix: server will always be killed before terminating the app
 - fix: scrollable settings
