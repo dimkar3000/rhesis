@@ -62,11 +62,19 @@ jobs:
       - name: Restore build cache
         uses: actions/cache/restore@v4
         with:
+          # The path list must match build-app.yml's save exactly, including
+          # the order: actions/cache hashes the paths into the cache version,
+          # so a different order is a guaranteed miss even with the right key.
           path: |
-            build/target
             ~/.cargo/registry
             ~/.cargo/git
+            build/target
           key: ${{ needs.build.outputs.cache-key }}
+          # If this run's save did not land (evicted, save failure), the
+          # previous debug tree still has every unchanged dependency; cargo
+          # rebuilds what the source changes invalidated.
+          restore-keys: |
+            rhesis-${{ runner.os }}-debug-
 
       # Clippy runs in the shared build (test mode), before the cache is
       # saved. Its check-mode artifacts are a separate compiler pipeline from

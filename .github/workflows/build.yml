@@ -52,6 +52,9 @@ jobs:
       - name: Restore build cache
         uses: actions/cache/restore@v4
         with:
+          # Same paths, same order as the release save in build-app.yml:
+          # actions/cache hashes the path list into the cache version, so a
+          # reordering turns every restore into a miss.
           path: |
             ~/.cargo/registry
             ~/.cargo/git

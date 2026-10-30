@@ -164,7 +164,9 @@ other workflows:
   `build/cmake-build` (CMake passes `--target-dir` there, so that is where
   the release Cargo tree lives), `build/artifacts`, fastText, LanguageTool
   and the language model in release mode. A cache miss is safe: the scripts
-  rebuild.
+  rebuild. Consumers must list the same paths in the same order—
+  `actions/cache` hashes the path list into the cache version, so reordering
+  is a guaranteed miss even with the right key.
 - `.cargo/` is gitignored, so CI has no target-dir/linker config; test jobs
   set `CARGO_TARGET_DIR=build/target` explicitly to match the cached path.
 - CI sets `CARGO_INCREMENTAL=0` and disables debug info to keep the cache
