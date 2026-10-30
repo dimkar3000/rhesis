@@ -110,6 +110,13 @@ inline void appRaiseMainWindow() {
     }
 }
 
+// QSettings defaults to the registry on Windows. Rust reads the persisted
+// language from the INI file (see language.rs), so keep a single file-based
+// store on every platform. Must run before any QSettings (QML Settings) exists.
+inline void useIniSettingsFormat() {
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+}
+
 inline void setupIconTheme() {
     QStringList paths = QIcon::themeSearchPaths();
     paths.prepend(":/icons");

@@ -46,6 +46,7 @@ const DEFAULT_FAKE_FIXTURE: &str = "checker";
 /// The sandbox lives inside the build frame so `cargo clean`-adjacent churn
 /// never pollutes a real user configuration, and failing runs leave their
 /// state around for inspection (it is truncated at every launch).
+#[cfg(unix)]
 fn sandbox_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("build/ui-tests/harness-env")
 }

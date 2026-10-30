@@ -11,6 +11,11 @@
 //! Serialization: exactly one test, and the child is the only Quick Test
 //! instance in flight, so `--test-threads=1` is not required.
 
+// Windows ships its own Kirigami-free QML (src/interop/qml/windows/); this suite
+// targets the Kirigami pages, which are not compiled there. (Also,
+// `tests/e2e/common` is a symlink that Windows checkouts do not resolve.)
+#![cfg(not(windows))]
+
 use std::process::Command;
 
 /// Platform plugin for the child: offscreen is deterministic and works

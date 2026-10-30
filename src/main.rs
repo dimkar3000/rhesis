@@ -1,3 +1,7 @@
+// Release builds on Windows are GUI-subsystem apps: no console window next to
+// the UI. Debug builds keep the console so `cargo run` still shows the logs.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 
 use cxx_qt_lib_extras::QApplication;
@@ -8,11 +12,23 @@ use std::env;
 use rhesis::interop::bridge;
 use rhesis::interop::language::{find_translations_dir, persisted_language};
 
+// Windows has its own Kirigami-free QML (see build.rs).
+#[cfg(windows)]
+const ROOT_QML_SOURCE: &str = "src/interop/qml/windows/Root.qml";
+#[cfg(not(windows))]
+const ROOT_QML_SOURCE: &str = "src/interop/qml/Root.qml";
+
+#[cfg(windows)]
+const DEFAULT_QUICK_STYLE: &str = "FluentWinUI3";
+#[cfg(not(windows))]
+const DEFAULT_QUICK_STYLE: &str = "org.kde.desktop";
+
 lazy_static! {
     static ref NAMESPACE: QString = QString::from("io.github.dimkar3000.rhesis");
     static ref ROOT_QML_FILE_PATH: QUrl = QUrl::from(&format!(
-        "qrc:/qt/qml/{}/src/interop/qml/Root.qml",
-        NAMESPACE.to_string().replace(".", "/")
+        "qrc:/qt/qml/{}/{}",
+        NAMESPACE.to_string().replace(".", "/"),
+        ROOT_QML_SOURCE
     ));
     static ref LOGO_PATH: QString = QString::from(":/icons/hicolor/22x22/apps/logo.png");
 }
@@ -32,6 +48,9 @@ fn run_ui() {
         Pin::as_mut(&mut app).set_organization_domain(&QString::from("dimkar.org"));
         Pin::as_mut(&mut app).set_application_name(&QString::from("Rhesis"));
     }
+
+    #[cfg(windows)]
+    bridge::ffi::useIniSettingsFormat();
 
     // Apply the persisted "keep running in the background" preference before
     // anything creates windows: with it enabled, hiding the last window must
@@ -85,7 +104,7 @@ fn run_ui() {
     let style = env::var("QT_QUICK_CONTROLS_STYLE");
     match style {
         Ok(style) => log::debug!("using QT_QUICK_CONTROLS_STYLE={style}"),
-        Err(_) => QQuickStyle::set_style(&QString::from("org.kde.desktop")),
+        Err(_) => QQuickStyle::set_style(&QString::from(DEFAULT_QUICK_STYLE)),
     }
 
     if let Some(engine) = engine.as_mut() {
