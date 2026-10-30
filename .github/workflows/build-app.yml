@@ -4,8 +4,9 @@ name: Build app
 # populated build tree back through the cache:
 #
 #   test    — `cargo test --no-run`, i.e. every test target plus the app and
-#             the QML runner, compiled once. The test job then only runs the
-#             binaries.
+#             the QML runner, compiled once, then `cargo clippy` so the lint
+#             pass's check-mode artifacts are cached too. The test job then
+#             only runs the binaries and the formatter.
 #   release — `scripts/build-common.sh`: the app (CMake + cargo), fastText,
 #             the language model, LanguageTool and the trimmed JRE, exactly
 #             what the packaging steps consume.
@@ -127,6 +128,17 @@ jobs:
           # target-dir override: name it here to match the cached path.
           CARGO_TARGET_DIR: build/target
         run: cargo test --no-run
+
+      # Clippy compiles in check mode, which produces metadata artifacts that
+      # test code generation cannot reuse. Running it here (rather than in the
+      # test job) puts those artifacts in the same cache as the binaries, so
+      # later runs only re-check the workspace crate instead of every
+      # dependency.
+      - name: Lint
+        if: inputs.mode == 'test'
+        env:
+          CARGO_TARGET_DIR: build/target
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Build release artifacts
         if: inputs.mode == 'release'

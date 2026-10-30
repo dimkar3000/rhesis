@@ -151,8 +151,10 @@ correctness, one packages releases.
 other workflows:
 
 - `test` mode: `cargo test --no-run` (every test target, the app and the QML
-  runner, compiled once); `release` mode: `scripts/build-common.sh` (app,
-  fastText, language model, LanguageTool, trimmed JRE)
+  runner, compiled once) plus `cargo clippy --all-targets`, so the lint
+  pass's check-mode artifacts are cached with the build; `release` mode:
+  `scripts/build-common.sh` (app, fastText, language model, LanguageTool,
+  trimmed JRE)
 - Restores `rhesis-<os>-<profile>-<Cargo.lock hash>` (plus fallback prefixes)
   and saves under `<that key>-<run id>-<attempt>`: the save key must be unique
   per run, otherwise a stable key gets pinned to the first commit with that
@@ -172,8 +174,10 @@ other workflows:
 `test.yml` — the only place tests run in CI:
 
 - Triggers: pushes to `main`/`develop`, PRs into them, manual dispatch
-- Gates: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test -- --skip qml_suites_pass`
+- Gates: `cargo fmt --check` and `cargo test -- --skip qml_suites_pass`;
+  clippy runs in the shared build (test mode) because its check-mode
+  artifacts are a different compiler pipeline from the test binaries and
+  must be cached there, or every run rechecks the whole dependency graph.
 - The QML page suites (`tests/ui/*.qml`) are local-only: their purpose is
   browser-free screenshots for manual inspection, so CI skips that one
   target. The boot E2E also skips its evidence screenshot when `CI` is set,

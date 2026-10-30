@@ -68,11 +68,12 @@ jobs:
             ~/.cargo/git
           key: ${{ needs.build.outputs.cache-key }}
 
+      # Clippy runs in the shared build (test mode), before the cache is
+      # saved. Its check-mode artifacts are a separate compiler pipeline from
+      # the test binaries, so running it here would re-check every dependency
+      # on every run instead of reusing the cached result.
       - name: Formatting
         run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
 
       - name: Tests
         # `qml_suites_pass` is the only test in the QML page-suite target.
