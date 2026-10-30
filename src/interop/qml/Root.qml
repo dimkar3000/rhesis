@@ -117,7 +117,7 @@ Kirigami.ApplicationWindow {
         // resolved by Qt.labs.platform's icon loader, and the tray ends up
         // publishing an item with an empty IconName AND an empty IconPixmap,
         // which Plasma renders as a blank slot.
-        icon.source: "qrc:/icons/hicolor/22x22/apps/logo.png"
+        icon.source: "qrc:/icons/hicolor/256x256/apps/logo.png"
         tooltip: {
             const address = "http://127.0.0.1:" + (appSettings.port || appSettings.defaultPort);
             switch (workerStatus) {

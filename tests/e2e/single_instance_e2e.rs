@@ -16,6 +16,11 @@
 //! cargo test --test single-instance-e2e -- --test-threads=1
 //! ```
 
+// Drives the Linux abstract-socket guard directly; the Windows guard (named
+// mutex + event) is covered by tests/unit/single_instance.rs.
+// `tests/e2e/common` is also a symlink that Windows checkouts do not resolve.
+#![cfg(not(windows))]
+
 mod common;
 
 use std::io::{BufRead, BufReader};

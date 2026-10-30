@@ -60,11 +60,11 @@
     </message>
     <message>
         <source>tray_start_server</source>
-        <translation>Εκκίνηση διακομιστή</translation>
+        <translation>Εκκίνηση server</translation>
     </message>
     <message>
         <source>tray_stop_server</source>
-        <translation>Διακοπή διακομιστή</translation>
+        <translation>Διακοπή server</translation>
     </message>
     <message>
         <source>tray_quit</source>
@@ -138,7 +138,7 @@
     </message>
     <message>
         <source>lt_retry_tooltip</source>
-        <translation>Επανάληψη εκκίνησης του διακομιστή γραμματικής</translation>
+        <translation>Επανάληψη εκκίνησης του server γραμματικής</translation>
     </message>
 </context>
 <context>
@@ -153,19 +153,19 @@
     </message>
     <message>
         <source>lt_server_section</source>
-        <translation>Διακομιστής LanguageTool</translation>
+        <translation>LanguageTool</translation>
     </message>
     <message>
         <source>server_type_label</source>
-        <translation>Τύπος διακομιστή</translation>
+        <translation>Τύπος server</translation>
     </message>
     <message>
         <source>embedded_server_label</source>
-        <translation>Ενσωματομένος (τοπικός) διακομιστής</translation>
+        <translation>Ενσωματομένος (τοπικός)</translation>
     </message>
     <message>
         <source>external_server_label</source>
-        <translation>Εξωτερικός (απομακρυσμένος) διακομιστής</translation>
+        <translation>Εξωτερικός (απομακρυσμένος)</translation>
     </message>
     <message>
         <source>port_label</source>
@@ -181,7 +181,7 @@
     </message>
     <message>
         <source>address_label</source>
-        <translation>Διεύθυνση διακομιστή</translation>
+        <translation>Διεύθυνση server</translation>
     </message>
     <message>
         <source>address_placeholder</source>
@@ -189,7 +189,7 @@
     </message>
     <message>
         <source>address_tooltip</source>
-        <translation>Διεύθυνση του εξωτερικού διακομιστή LanguageTool, π.χ. http://192.168.1.10:8081. Το πρόθεμα http:// και η θύρα είναι προαιρετικά.</translation>
+        <translation>Διεύθυνση του εξωτερικού server LanguageTool, π.χ. http://192.168.1.10:8081. Το πρόθεμα http:// και η θύρα είναι προαιρετικά.</translation>
     </message>
     <message>
         <source>tooltip_settings_section</source>
@@ -225,7 +225,7 @@
     </message>
     <message>
         <source>background_section</source>
-        <translation>Διακομιστής στο παρασκήνιο</translation>
+        <translation>Server στο παρασκήνιο</translation>
     </message>
     <message>
         <source>background_switch_label</source>
@@ -233,7 +233,7 @@
     </message>
     <message>
         <source>background_tooltip</source>
-        <translation>Διατήρηση του ενσωματωμένου διακομιστή LanguageTool σε λειτουργία μετά το κλείσιμο του παραθύρου, για χρήση από άλλες εφαρμογές (http://127.0.0.1:%1/v2/check). Άνοιγμα του Rhesis ή τερματισμός από το εικονίδιο συστήματος.</translation>
+        <translation>Διατήρηση του ενσωματωμένου server LanguageTool σε λειτουργία μετά το κλείσιμο του παραθύρου, για χρήση από άλλες εφαρμογές (http://127.0.0.1:%1/v2/check). Άνοιγμα του Rhesis ή τερματισμός από το εικονίδιο συστήματος.</translation>
     </message>
     <message>
         <source>autostart_switch_label</source>

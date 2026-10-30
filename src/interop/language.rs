@@ -7,6 +7,22 @@ use std::{
 /// the same way for every install layout (dev tree, native, per-user,
 /// AppImage, Flatpak).
 pub fn find_translations_dir() -> Option<PathBuf> {
+    // Windows: the installer and the portable zip keep everything next to
+    // the executable.
+    #[cfg(windows)]
+    if let Some(dir) = exe_dir() {
+        for candidate in [
+            dir.join("translations"),
+            dir.join("../share/rhesis/translations"),
+        ] {
+            log::debug!("Looking for translations in: {candidate:?}");
+            if candidate.is_dir() {
+                log::info!("Found translations: {candidate:?}");
+                return Some(candidate);
+            }
+        }
+    }
+
     if let Some(path) = find_translations_dir_with_prefix("/usr/share") {
         return Some(path);
     }
@@ -43,6 +59,18 @@ pub fn find_translations_dir() -> Option<PathBuf> {
     None
 }
 
+/// Directory containing the running executable (Windows install layout root).
+#[cfg(windows)]
+pub fn exe_dir() -> Option<PathBuf> {
+    match env::current_exe() {
+        Ok(exe) => exe.parent().map(Path::to_path_buf),
+        Err(e) => {
+            log::warn!("cannot determine the executable location: {e:?}");
+            None
+        }
+    }
+}
+
 fn find_translations_dir_with_prefix(prefix: &str) -> Option<PathBuf> {
     let candidate = Path::new(&format!("{prefix}/rhesis/translations")).to_path_buf();
     log::debug!("Looking for translations in: {candidate:?}");
@@ -55,11 +83,25 @@ fn find_translations_dir_with_prefix(prefix: &str) -> Option<PathBuf> {
     None
 }
 
-/// Language override persisted by the settings page (`settings.language` in
-/// the QML `Settings` store), e.g. `"el_GR"`. Empty means "system locale".
-/// Reads the same QSettings INI file the QML side writes, so there is a
-/// single source of truth and no extra dependency.
-pub fn persisted_language() -> String {
+/// Location of the QSettings INI file shared with the QML `Settings` store.
+/// Windows: `%APPDATA%\rhesis\Rhesis.ini` (main.rs forces the INI format,
+/// QSettings would otherwise use the registry).
+#[cfg(windows)]
+fn settings_ini_path() -> Option<PathBuf> {
+    match env::var_os("APPDATA") {
+        Some(dir) => Some(Path::new(&dir).join("rhesis").join("Rhesis.ini")),
+        None => {
+            log::error!(
+                "APPDATA is not set; cannot read persisted language, \
+                 falling back to system locale"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn settings_ini_path() -> Option<PathBuf> {
     let config_home = match env::var("XDG_CONFIG_HOME") {
         Ok(dir) => dir,
         Err(_) => match env::var("HOME") {
@@ -69,11 +111,21 @@ pub fn persisted_language() -> String {
                     "neither XDG_CONFIG_HOME nor HOME is set ({e:?}); \
                      cannot read persisted language, falling back to system locale"
                 );
-                return String::new();
+                return None;
             }
         },
     };
-    let ini_path = Path::new(&config_home).join("rhesis/Rhesis.conf");
+    Some(Path::new(&config_home).join("rhesis/Rhesis.conf"))
+}
+
+/// Language override persisted by the settings page (`settings.language` in
+/// the QML `Settings` store), e.g. `"el_GR"`. Empty means "system locale".
+/// Reads the same QSettings INI file the QML side writes, so there is a
+/// single source of truth and no extra dependency.
+pub fn persisted_language() -> String {
+    let Some(ini_path) = settings_ini_path() else {
+        return String::new();
+    };
     let contents = match std::fs::read_to_string(&ini_path) {
         Ok(contents) => contents,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

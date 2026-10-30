@@ -203,7 +203,7 @@ other workflows:
 - Triggers: tags matching `v*` or manual dispatch
 - Custom Docker image (`ghcr.io/<owner>/rhesis-ci:kde-6.11`)
 - Tag format determines profile: `v*-*` (pre-release) → `release-fast`, stable tag → `release`
-- Builds Flatpak + AppImage + desktop tarballs (`build-desktop.sh`, global and `--local`), uploads to release on version tags
+- Builds Flatpak + AppImage + desktop tarballs via one `build-linux` step (wrapper script `scripts/build-linux.sh` around `build-flatpak.sh`, `build-appimage.sh` and `build-desktop.sh` — global and `--local`), uploads to release on version tags
 - Release includes `runner.sh` alongside the desktop tarballs for download-and-install
 
 ## Releasing

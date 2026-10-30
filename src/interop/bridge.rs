@@ -72,6 +72,8 @@ pub mod ffi {
 
         fn setupIconTheme();
 
+        fn useIniSettingsFormat();
+
         fn applyLanguage(dir: &QString, preferredLocale: &QString) -> bool;
 
         fn retranslateForObject(object: Pin<&mut LanguageManager>);

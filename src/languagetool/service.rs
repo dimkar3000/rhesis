@@ -824,6 +824,14 @@ impl LanguageToolWorker {
     fn language_tool_dir() -> Option<PathBuf> {
         let mut candidates = vec![PathBuf::from("/usr/share/rhesis/LanguageTool")];
 
+        // Windows: installer / portable zip layout, next to the executable.
+        // Goes first, like every packaged location.
+        #[cfg(windows)]
+        if let Some(dir) = crate::interop::language::exe_dir() {
+            candidates.insert(0, dir.join("../share/rhesis/LanguageTool"));
+            candidates.insert(0, dir.join("LanguageTool"));
+        }
+
         // Per-user install: $HOME/.local/share/rhesis/LanguageTool
         if let Some(home) = std::env::var_os("HOME") {
             candidates.push(PathBuf::from(home).join(".local/share/rhesis/LanguageTool"));
@@ -853,6 +861,20 @@ impl LanguageToolWorker {
         None
     }
 
+    /// The `java` to run. Windows ships a trimmed JRE next to the executable
+    /// (`jre\bin\java.exe`); otherwise (and elsewhere) `java` from PATH, as
+    /// the Linux launchers put the bundled JRE there.
+    fn java_executable() -> PathBuf {
+        #[cfg(windows)]
+        if let Some(dir) = crate::interop::language::exe_dir() {
+            let bundled = dir.join("jre").join("bin").join("java.exe");
+            if bundled.is_file() {
+                return bundled;
+            }
+        }
+        PathBuf::from("java")
+    }
+
     fn spawn_server(port: u16) -> Result<Child, String> {
         let lt_dir = match Self::language_tool_dir() {
             Some(dir) => dir,
@@ -873,28 +895,45 @@ impl LanguageToolWorker {
 
         Self::ensure_server_properties(&lt_dir);
 
-        let result = Command::new("java")
-            .args([
-                "-cp",
-                "languagetool-server.jar",
-                "org.languagetool.server.HTTPServer",
-                "--config",
-                "server.properties",
-                "--port",
-                &port.to_string(),
-                "--allow-origin",
-            ])
+        let mut command = Command::new(Self::java_executable());
+        command.args([
+            "-cp",
+            "languagetool-server.jar",
+            "org.languagetool.server.HTTPServer",
+        ]);
+        // Without fastText there is no server.properties (and nothing to put
+        // in it): LanguageTool exits on a --config file that does not exist.
+        if lt_dir.join("server.properties").is_file() {
+            command.args(["--config", "server.properties"]);
+        }
+        command
+            .args(["--port", &port.to_string(), "--allow-origin"])
             .current_dir(&lt_dir)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+            .stderr(Stdio::piped());
 
-        let mut child = match result {
+        // A GUI app has no console: without this flag Windows opens a
+        // console window for the JVM.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = match command.spawn() {
             Ok(c) => c,
             Err(e) => {
                 return Err(format!("failed to spawn LanguageTool: {e:?}"));
             }
         };
+
+        // The JVM must not outlive Rhesis (a crash would otherwise keep the
+        // port taken until the user kills it by hand).
+        #[cfg(windows)]
+        if let Err(e) = crate::languagetool::job_object::kill_on_parent_exit(&child) {
+            log::warn!("could not tie LanguageTool to the Rhesis process: {e}");
+        }
 
         // Fail fast when java exits during startup (bad config, missing jar,
         // lost port race, ...), capturing its stderr so the failure reason

@@ -9,14 +9,14 @@ on:
 jobs:
   # Shared build step (also used by test.yml): builds the app + fastText +
   # language model + LanguageTool + trimmed JRE and caches the tree. The
-  # packaging job below restores it instead of rebuilding.
+  # build-linux job below restores it instead of rebuilding.
   app:
     uses: ./.github/workflows/build-app.yml
     with:
       mode: release
       profile: auto
 
-  package:
+  build-linux:
     needs: [app]
     runs-on: ubuntu-latest
     container:
@@ -65,22 +65,11 @@ jobs:
             build/lid.176.ftz
           key: ${{ needs.app.outputs.cache-key }}
 
-      - name: Build Flatpak
-        run: ./scripts/build-flatpak.sh --verbose --no-spinner --no-runtimes
-
-      - name: Build AppImage
+      - name: build-linux
         run: |
-          ./scripts/build-appimage.sh \
+          ./scripts/build-linux.sh --verbose --no-spinner \
             --linuxdeploy /opt/appimage-tools/linuxdeploy-x86_64.AppImage \
-            --appimagetool /opt/appimage-tools/appimagetool-x86_64.AppImage \
-            --verbose \
-            --no-spinner
-
-      - name: Build desktop tarball (global)
-        run: ./scripts/build-desktop.sh --verbose --no-spinner
-
-      - name: Build desktop tarball (local)
-        run: ./scripts/build-desktop.sh --local --verbose --no-spinner
+            --appimagetool /opt/appimage-tools/appimagetool-x86_64.AppImage
 
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
@@ -100,8 +89,65 @@ jobs:
           name: desktop
           path: build/artifacts/desktop/*.tar.gz
 
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        # scripts/*.sh are bash; Git Bash ships with the runner.
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags, same as the Linux job.
+          fetch-depth: 0
+
+      - name: Check version consistency (final releases only)
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: ./scripts/check-versions.sh
+
+      - name: Determine build profile
+        id: profile
+        run: |
+          if [[ "${{ github.ref_name }}" == v*-* ]]; then
+            echo "profile=release-fast" >> "$GITHUB_OUTPUT"
+          else
+            echo "profile=release" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install JDK (for the trimmed JRE)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows zip and installer
+        env:
+          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
+        run: ./scripts/build-windows.sh --verbose --no-spinner
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            build/artifacts/windows/*.zip
+            build/artifacts/windows/*-setup.exe
+
   release:
-    needs: [package]
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -121,12 +167,19 @@ jobs:
           cp artifacts/flatpak/*.flatpak release/
           cp artifacts/appimages/*.AppImage release/
           cp artifacts/desktop/*.tar.gz release/
+          cp artifacts/windows/*.zip release/
+          cp artifacts/windows/*-setup.exe release/
           chmod +x scripts/runner.sh
           cp scripts/runner.sh release/runner.sh
           ls -lh release/
 
       - name: Generate release body from CHANGELOG
+        if: ${{ !contains(github.ref_name, 'test') }}
         run: python3 scripts/release-body.py CHANGELOG.md "${{ github.ref_name }}" > release_body.md
+
+      - name: Placeholder body for test releases
+        if: ${{ contains(github.ref_name, 'test') }}
+        run: echo "Test build ${{ github.ref_name }}" > release_body.md
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

@@ -6,10 +6,16 @@
 //! it and keeps listening; later launches send it a `show` request — their
 //! window would have been hidden behind the tray — and exit immediately.
 //!
-//! Windows (design, not yet implemented): a named mutex / named pipe pair
-//! with the same `acquire`/`spawn_runner` interface; the QML-independent
-//! guard slot in main.rs needs no further changes.
+//! Windows: a session-local named mutex decides who is primary and a named
+//! event carries the `show` request (see `windows.rs`), behind the same
+//! `acquire`/`spawn_runner` interface.
 
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::{acquire, spawn_runner};
+
+#[cfg(not(windows))]
 use std::{
     io::Write,
     os::linux::net::SocketAddrExt,
@@ -32,10 +38,13 @@ pub const SHOW_REQUEST: &[u8] = b"show\n";
 /// has to come up before any UI does (a second launch happening during the
 /// QML setup phase must fail its connect), but the dispatch thread only has
 /// a Qt thread handle once the QML objects exist.
+#[cfg(not(windows))]
 static LISTENER: OnceLock<UnixListener> = OnceLock::new();
 
+#[cfg(not(windows))]
 static RUNNER_SPAWNED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(not(windows))]
 fn socket_addr() -> SocketAddr {
     SocketAddr::from_abstract_name(SOCKET_NAME).expect("socket name is short and valid")
 }
@@ -44,6 +53,7 @@ fn socket_addr() -> SocketAddr {
 /// the primary instance (and owns the listener), `false` when another
 /// instance is running — in which case it has been asked to show its window
 /// and this process should exit right away.
+#[cfg(not(windows))]
 pub fn acquire() -> bool {
     let addr = socket_addr();
     match UnixListener::bind_addr(&addr) {
@@ -81,6 +91,7 @@ pub fn acquire() -> bool {
 /// request is marshaled to the GUI thread, where the hidden window becomes
 /// visible and focused. The thread intentionally runs until process exit;
 /// joining it would block teardown on a pending accept.
+#[cfg(not(windows))]
 pub fn spawn_runner(
     qt_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::AsyncMessagingHelper>,
 ) -> Option<JoinHandle<()>> {
@@ -120,6 +131,7 @@ pub fn spawn_runner(
     }
 }
 
+#[cfg(not(windows))]
 fn run_loop(
     listener: UnixListener,
     qt_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::AsyncMessagingHelper>,
@@ -134,6 +146,7 @@ fn run_loop(
     }
 }
 
+#[cfg(not(windows))]
 fn handle_stream(
     mut stream: UnixStream,
     qt_thread: &cxx_qt::CxxQtThread<crate::interop::bridge::ffi::AsyncMessagingHelper>,

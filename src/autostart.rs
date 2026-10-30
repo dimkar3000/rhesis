@@ -5,16 +5,22 @@
 //! the entry survives across distribution methods and passes `--hidden` so
 //! the window never flashes at login (see `appHideRootWindow` in helper.h).
 //!
-//! Windows (design, not yet implemented): a `HKCU\Software\Microsoft\
-//! Windows\CurrentVersion\Run` value pointing at the executable, guarded by
-//! the same `is_enabled`/`set_enabled` interface — the QML toggle can be
-//! wired without further changes.
+//! Windows: a value in `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+//! that launches the executable with `--hidden`, behind the same
+//! `is_enabled`/`set_enabled`/`self_heal` interface. Per-user, so no admin
+//! rights are needed. Windows lets the user switch such entries off in
+//! Task Manager's Startup tab; that state is not read back here.
 
+#[cfg(not(windows))]
 use std::fs;
+#[cfg(windows)]
+use std::path::Path;
+#[cfg(not(windows))]
 use std::path::{Path, PathBuf};
 
 /// Flatpak application id: also doubles as the desktop entry name, which is
 /// what makes XDG autostart entries idempotent across package flavors.
+#[cfg(not(windows))]
 const APP_ID: &str = "io.github.dimkar3000.rhesis";
 
 /// CLI flag launching into the tray without flashing the window; ignored
@@ -48,6 +54,7 @@ fn autostart_file() -> Option<PathBuf> {
 
 /// Desktop files quote `Exec` arguments with `"`; a path with embedded
 /// quotes never comes from our install flavors, so plain quoting is enough.
+#[cfg(not(windows))]
 fn exec_escape(path: &str) -> String {
     if path.contains(' ') {
         format!("\"{path}\" {HIDDEN_FLAG}")
@@ -248,18 +255,244 @@ pub fn set_enabled(enable: bool) -> Result<(), &'static str> {
     Ok(())
 }
 
-// Windows: the registry Run key keeps the same interface so the QML toggle
-// needs no changes when it gets implemented (needs the `winreg` crate or
-// direct registry calls; the value would be the executable plus --hidden and
-// only makes the app launch itself exactly like the desktop entry does).
+// Windows: the per-user Run key. The value name is the product name; the data
+// is the quoted executable plus `--hidden`, so a login launch lands in the
+// tray like the Linux desktop entry does (see Root.qml's hidden-launch gate).
 #[cfg(windows)]
-pub fn is_enabled() -> bool {
-    false
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(windows)]
+const RUN_VALUE: &str = "Rhesis";
+
+#[cfg(windows)]
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// What the Run value should contain for the running executable.
+#[cfg(windows)]
+fn run_command() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    Some(format!("\"{}\" {HIDDEN_FLAG}", exe.display()))
+}
+
+/// The executable a Run value launches: its quoted prefix, or its first
+/// token when it is not quoted.
+#[cfg(windows)]
+fn run_target(command: &str) -> Option<&str> {
+    let command = command.trim();
+    match command.strip_prefix('"') {
+        Some(rest) => rest.split('"').next(),
+        None => command.split_whitespace().next(),
+    }
+    .filter(|target| !target.is_empty())
 }
 
 #[cfg(windows)]
-pub fn set_enabled(_enable: bool) -> Result<(), &'static str> {
-    Err("autostart on Windows is not implemented yet")
+fn read_value(key_path: &str, name: &str) -> Option<String> {
+    use std::ptr;
+    use windows_sys::Win32::{
+        Foundation::ERROR_SUCCESS,
+        System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ},
+    };
+
+    let key = wide(key_path);
+    let name = wide(name);
+    let mut bytes: u32 = 0;
+    // SAFETY: the key and value names are NUL-terminated UTF-16; with a null
+    // data pointer the call only reports the required size in `bytes`.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut bytes,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+
+    let mut buffer = vec![0u16; (bytes as usize).div_ceil(2) + 1];
+    let mut capacity = (buffer.len() * 2) as u32;
+    // SAFETY: `buffer` is writable for `capacity` bytes.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut capacity,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let len = buffer
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..len]))
+}
+
+#[cfg(windows)]
+fn write_value(key_path: &str, name: &str, command: &str) -> Result<(), &'static str> {
+    use windows_sys::Win32::{
+        Foundation::ERROR_SUCCESS,
+        System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ},
+    };
+
+    let key = wide(key_path);
+    let name = wide(name);
+    let data = wide(command);
+    // SAFETY: all strings are NUL-terminated UTF-16 and `data` is readable
+    // for the byte length passed (terminator included, as REG_SZ requires).
+    let status = unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            REG_SZ,
+            data.as_ptr().cast(),
+            (data.len() * 2) as u32,
+        )
+    };
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        log::error!("RegSetKeyValueW failed with status {status}");
+        Err(SET_ERROR_MESSAGE)
+    }
+}
+
+#[cfg(windows)]
+fn delete_value(key_path: &str, name: &str) -> Result<(), &'static str> {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS},
+        System::Registry::{RegDeleteKeyValueW, HKEY_CURRENT_USER},
+    };
+
+    let key = wide(key_path);
+    let name = wide(name);
+    // SAFETY: both names are NUL-terminated UTF-16.
+    let status = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
+    // Already gone is the state the caller asked for.
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        log::error!("RegDeleteKeyValueW failed with status {status}");
+        Err(SET_ERROR_MESSAGE)
+    }
+}
+
+#[cfg(windows)]
+fn read_run_value() -> Option<String> {
+    read_value(RUN_KEY, RUN_VALUE)
+}
+
+#[cfg(windows)]
+fn write_run_value(command: &str) -> Result<(), &'static str> {
+    write_value(RUN_KEY, RUN_VALUE, command)
+}
+
+#[cfg(windows)]
+fn delete_run_value() -> Result<(), &'static str> {
+    delete_value(RUN_KEY, RUN_VALUE)
+}
+
+#[cfg(windows)]
+pub fn is_enabled() -> bool {
+    read_run_value().is_some()
+}
+
+#[cfg(windows)]
+pub fn set_enabled(enable: bool) -> Result<(), &'static str> {
+    if enable {
+        let command = run_command().ok_or("could not determine the executable path")?;
+        write_run_value(&command)
+    } else {
+        delete_run_value()
+    }
+}
+
+/// Repoint a Run value whose executable no longer exists (a moved or
+/// re-extracted portable copy) at the running one. A value that still points
+/// at an existing file is left alone: another install of Rhesis (say the
+/// installed copy, while this is a portable one) may legitimately own it.
+#[cfg(windows)]
+pub fn self_heal() -> bool {
+    let Some(current) = read_run_value() else {
+        return false;
+    };
+    let target_exists = run_target(&current).is_some_and(|target| Path::new(target).is_file());
+    if target_exists {
+        return false;
+    }
+    match run_command() {
+        Some(command) if command != current => write_run_value(&command).is_ok(),
+        _ => false,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::{delete_value, read_value, run_target, wide, write_value};
+
+    #[test]
+    fn registry_value_round_trips_on_a_scratch_key() {
+        use windows_sys::Win32::System::Registry::{RegDeleteKeyW, HKEY_CURRENT_USER};
+
+        // Never the real Run key: a throwaway key per test process, removed
+        // again at the end.
+        let parent = r"Software\rhesis-tests";
+        let key = format!(r"{parent}\autostart-{}", std::process::id());
+        let name = "Rhesis";
+
+        assert_eq!(read_value(&key, name), None, "a fresh key has no value");
+
+        let command = r#""C:\Program Files\Rhesis\rhesis.exe" --hidden"#;
+        write_value(&key, name, command).expect("write creates the key and the value");
+        assert_eq!(read_value(&key, name).as_deref(), Some(command));
+
+        write_value(&key, name, "other").expect("write replaces the value");
+        assert_eq!(read_value(&key, name).as_deref(), Some("other"));
+
+        delete_value(&key, name).expect("delete removes the value");
+        assert_eq!(read_value(&key, name), None);
+        delete_value(&key, name).expect("deleting a missing value is not an error");
+
+        // SAFETY: NUL-terminated key paths; the leaf must go before its parent.
+        unsafe {
+            RegDeleteKeyW(HKEY_CURRENT_USER, wide(&key).as_ptr());
+            RegDeleteKeyW(HKEY_CURRENT_USER, wide(parent).as_ptr());
+        }
+    }
+
+    #[test]
+    fn run_target_reads_the_quoted_executable() {
+        assert_eq!(
+            run_target(r#""C:\Program Files\Rhesis\rhesis.exe" --hidden"#),
+            Some(r"C:\Program Files\Rhesis\rhesis.exe")
+        );
+    }
+
+    #[test]
+    fn run_target_falls_back_to_the_first_token() {
+        assert_eq!(
+            run_target(r"C:\Rhesis\rhesis.exe --hidden"),
+            Some(r"C:\Rhesis\rhesis.exe")
+        );
+    }
+
+    #[test]
+    fn run_target_rejects_empty_values() {
+        assert_eq!(run_target("   "), None);
+        assert_eq!(run_target(r#""" --hidden"#), None);
+    }
 }
 
 #[cfg(test)]

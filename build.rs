@@ -3,20 +3,38 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 fn main() {
     let module = QmlModule::new("io.github.dimkar3000.rhesis");
 
+    // The Windows UI lives in qml/windows/ and avoids Kirigami; the other
+    // platforms use the Kirigami files next to it. Only one set may be
+    // registered, otherwise the types clash and qmlcachegen has to resolve
+    // `org.kde.kirigami` on Windows.
+    let target_is_windows = std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
+
+    // Shell-visible identity lives in the exe itself: embed version info and
+    // the icon so Task manager's Startup list shows "Rhesis" with logo and
+    // publisher instead of the bare file name with the generic one.
+    if target_is_windows {
+        embed_windows_resources();
+    }
+
     let paths = glob::glob("src/interop/qml/**/*.qml")
         .expect("invalid glob pattern for QML sources (src/interop/qml/**/*.qml)");
 
-    unsafe {
-        let mut builder = CxxQtBuilder::new_qml_module(module.qml_files(paths.map(|x| {
+    let paths: Vec<String> = paths
+        .map(|x| {
             x.expect("failed to read a QML source entry matched by the glob")
                 .to_str()
                 .expect("QML source path is not valid UTF-8")
-                .to_string()
-        })))
-        .qt_module("Gui")
-        .qt_module("Quick")
-        .crate_include_root(Some("src/interop/cpp".to_string()))
-        .files(["src/interop/bridge.rs"]);
+                .replace('\\', "/")
+        })
+        .filter(|path| path.starts_with("src/interop/qml/windows/") == target_is_windows)
+        .collect();
+
+    unsafe {
+        let mut builder = CxxQtBuilder::new_qml_module(module.qml_files(paths))
+            .qt_module("Gui")
+            .qt_module("Quick")
+            .crate_include_root(Some("src/interop/cpp".to_string()))
+            .files(["src/interop/bridge.rs"]);
 
         // The QtQuickTest module and C++ probes are always compiled so that
         // test targets (ui-boot, rhesis-ui-runner) can link them without a
@@ -42,4 +60,31 @@ fn main() {
 
         builder.qrc("resources.qrc").build();
     }
+}
+
+/// Version information and icon for the Windows executable.
+///
+/// The Windows shell reads these from the exe itself, not from the registry:
+/// Task manager's Startup list shows `FileDescription` as the entry name
+/// (falling back to the bare file name) and `CompanyName` as the publisher,
+/// and it extracts the icon from the exe's resources. Without them the
+/// autostart entry lists the lowercase file name `rhesis` with a blank
+/// publisher and the generic executable icon, even though the Run value
+/// itself is named "Rhesis". FileVersion/ProductVersion default to
+/// CARGO_PKG_VERSION. The icon is built from the root 512 px logo into
+/// `assets/rhesis.ico`; regenerate it the same way when the logo changes.
+/// winresource finds rc.exe via the Windows SDK registry key, so no
+/// Developer Command Prompt environment is needed on CI.
+fn embed_windows_resources() {
+    let mut resources = winresource::WindowsResource::new();
+    resources
+        .set("FileDescription", "Rhesis")
+        .set("ProductName", "Rhesis")
+        .set("CompanyName", "dimkar3000")
+        .set("LegalCopyright", "MIT License")
+        .set("OriginalFilename", "rhesis.exe")
+        .set_icon("assets/rhesis.ico");
+    resources
+        .compile()
+        .expect("failed to embed the Windows resources into the executable");
 }
