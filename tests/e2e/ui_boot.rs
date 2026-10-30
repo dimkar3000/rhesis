@@ -28,6 +28,11 @@
 //! screenshot to `build/ui-tests/boot-env/boot-window.png` for manual
 //! inspection; CI sets `CI` and saves nothing.
 
+// Windows ships its own Kirigami-free QML (src/interop/qml/windows/); this suite
+// targets the Kirigami pages, which are not compiled there. (Also,
+// `tests/e2e/common` is a symlink that Windows checkouts do not resolve.)
+#![cfg(not(windows))]
+
 mod common;
 
 use std::env;

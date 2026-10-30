@@ -64,6 +64,20 @@ sudo ./runner.sh --install
 Uninstall with `sudo rhesis --uninstall` for global installations or `rhesis --uninstall`
 for a per-user install.
 
+### Option 4: Windows
+
+Download from the [releases page](https://github.com/dimkar3000/rhesis/releases):
+
+- `rhesis-<version>-windows-x86_64-setup.exe`: installer (per user by default,
+  no admin rights needed; Start menu entry and uninstaller included).
+- `rhesis-<version>-windows-x86_64.zip`: portable. Extract anywhere and run
+  `Rhesis\rhesis.exe`.
+
+Both bundle LanguageTool and a trimmed Java runtime, so nothing else is
+required. Settings live in `%APPDATA%\rhesis\Rhesis.ini`. Automatic language
+detection uses LanguageTool's built-in detector (the fastText model is not
+bundled on Windows).
+
 ## Completed/Pending Features
 - [x] Basic suggestions features
 - [x] Flatpak distribution
@@ -73,7 +87,7 @@ for a per-user install.
 - [x] Alternative distribution methods - Native packages beyond Flatpak
 - [x] Ability to run in the background, allowing the server to be used by other apps
 - [x] Start at login - creates an XDG autostart entry (Settings toggle; launches hidden to the tray)
-- [ ] Windows build?
+- [x] Windows build (Fluent UI, zip + installer)
 
 ## Local Development
 
@@ -84,7 +98,32 @@ for a per-user install.
 - Java 17+ JDK
 - [fastText](https://github.com/facebookresearch/fastText)
 
-### Setup & Run
+### Windows
+
+Needs Rust (MSVC toolchain) with the Visual Studio C++ Build Tools, Qt 6.8+
+(MSVC 2022 64-bit kit) and a JDK 17+. Windows uses its own Kirigami-free QML in
+`src/interop/qml/windows/`, so KDE Frameworks are not needed.
+
+```sh
+# QMAKE must point at the Qt kit, and its bin dir must be on PATH to run
+export QMAKE='C:\Qt\6.8.3\msvc2022_64\bin\qmake.exe'
+export PATH="/c/Qt/6.8.3/msvc2022_64/bin:$PATH"
+
+# Compile the translations once (the .qm files are gitignored)
+lrelease translations/*.ts
+
+# Extract LanguageTool-6.6.zip (https://languagetool.org/download/) so that
+# build/LanguageTool/languagetool-server.jar exists. Without a Java on PATH or
+# a bundled jre\ the embedded server cannot start.
+
+cargo run
+
+# Portable zip + installer into build/artifacts/windows (Git Bash; the installer
+# step needs Inno Setup 6, pass --no-installer to skip it)
+scripts/build-windows.sh
+```
+
+### Setup & Run (Linux)
 
 ```sh
 # Downloads LanguageTool release, builds fastText, downloads lid.176.ftz

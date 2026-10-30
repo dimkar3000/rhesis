@@ -4,5 +4,12 @@
         <file>icons/hicolor/22x22/actions/configure.svg</file>
         <file>icons/hicolor/22x22/actions/dialog-ok-apply.svg</file>
         <file>icons/hicolor/22x22/apps/logo.png</file>
+        <file>icons/windows/add.svg</file>
+        <file>icons/windows/apply.svg</file>
+        <file>icons/windows/back.svg</file>
+        <file>icons/windows/refresh.svg</file>
+        <file>icons/windows/remove.svg</file>
+        <file>icons/windows/reset.svg</file>
+        <file>icons/windows/settings.svg</file>
     </qresource>
 </RCC>

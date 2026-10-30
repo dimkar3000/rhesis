@@ -1,0 +1,3 @@
+# Shell scripts run under Git Bash on Windows and in Linux containers: keep LF
+# even when core.autocrlf checks them out as CRLF (bash chokes on `\r`).
+*.sh text eol=lf
