@@ -10,7 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{interop::recommendation::Recommendation, languagetool::client::LanguageToolClient};
+use crate::{
+    interop::recommendation::Recommendation,
+    languagetool::{client::LanguageToolClient, provider::CompletionProvider},
+};
 use crossbeam::channel::{after, unbounded, Receiver, Sender};
 use cxx_qt_lib::QString;
 
@@ -148,6 +151,12 @@ pub struct LanguageToolWorker {
     status: WorkerStatus,
     consecutive_failures: u32,
     pub startup_timeout: Duration,
+    /// `true` when the worker must manage a real LanguageTool server
+    /// (spawn, health check, readiness probing). Resolved once when the
+    /// worker thread starts, from the provider actually chosen: a recorded
+    /// fixture answers on its own, so the server lifecycle is skipped
+    /// entirely instead of spawning java that nothing would talk to.
+    server_required: bool,
 }
 
 /// Default Implementation of the LanguageToolWorker will just leave the service uninitialized. It's up to the user the set it up afterward and start it
@@ -170,6 +179,8 @@ impl Default for LanguageToolWorker {
             startup_timeout: Duration::from_secs(60),
             local_port: 2689,
             local_server_handle: None,
+            // Refined in `run_loop` once the provider is known.
+            server_required: true,
         }
     }
 }
@@ -255,7 +266,11 @@ impl LanguageToolWorker {
             }
         };
 
-        let mut client = LanguageToolClient::new(&self.active_address());
+        let mut provider = CompletionProvider::chosen(&self.active_address());
+        // A fake provider answers by itself: there is no server to spawn,
+        // probe or keep alive. Derived from the provider actually chosen so
+        // a fixture that failed to load (fallback to Live) still gets one.
+        self.server_required = !matches!(provider, CompletionProvider::Fake(_));
         let mut last_text = QString::default();
 
         // Boot state: stopped, worker thread alive, no server.
@@ -274,9 +289,9 @@ impl LanguageToolWorker {
 
             let outcome = match event {
                 LanguageToolWorkerEvent::UpdateSuggestions(text) => {
-                    self.handle_suggestions(text, &mut last_text, &mut client, &runtime)
+                    self.handle_suggestions(text, &mut last_text, &mut provider, &runtime)
                 }
-                other => self.process_event(other, &mut client, &runtime, &mut last_text),
+                other => self.process_event(other, &mut provider, &runtime, &mut last_text),
             };
 
             match outcome {
@@ -296,7 +311,7 @@ impl LanguageToolWorker {
         &mut self,
         mut text: QString,
         last_text: &mut QString,
-        client: &mut LanguageToolClient,
+        provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) -> Outcome {
         if !self.status.is_started() {
@@ -321,7 +336,7 @@ impl LanguageToolWorker {
                             text = new_text;
                         }
                     }
-                    Ok(other) => match self.process_event(other, client, runtime, last_text) {
+                    Ok(other) => match self.process_event(other, provider, runtime, last_text) {
                         Outcome::Continue => {
                             // A lifecycle event (e.g. Stop) may have taken us
                             // out of Started; drop the pending text then.
@@ -347,7 +362,7 @@ impl LanguageToolWorker {
 
         *last_text = text.clone();
 
-        match runtime.block_on(client.get_recommendation(text.to_string())) {
+        match runtime.block_on(provider.check(&text.to_string())) {
             Ok(suggestions) => {
                 self.note_request_success();
                 log::debug!(
@@ -373,7 +388,10 @@ impl LanguageToolWorker {
     /// Idle in `Started` emits nothing (no log/UI spam per keystroke).
     fn note_request_success(&mut self) {
         if matches!(self.status, WorkerStatus::FailedToRespond(_)) {
-            log::info!("LanguageTool is responding again at {}", self.active_address());
+            log::info!(
+                "LanguageTool is responding again at {}",
+                self.active_address()
+            );
             self.emit_status(WorkerStatus::Started);
         }
     }
@@ -440,7 +458,7 @@ impl LanguageToolWorker {
     fn process_event(
         &mut self,
         event: LanguageToolWorkerEvent,
-        client: &mut LanguageToolClient,
+        provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
         last_text: &mut QString,
     ) -> Outcome {
@@ -448,7 +466,7 @@ impl LanguageToolWorker {
             LanguageToolWorkerEvent::UpdateSuggestions(_) => Outcome::Continue,
             LanguageToolWorkerEvent::UpdateColors(colors) => {
                 log::info!("updating {} color rules", colors.len());
-                client.set_colors(colors);
+                provider.set_colors(colors);
                 Outcome::Continue
             }
             LanguageToolWorkerEvent::Kill => {
@@ -460,11 +478,11 @@ impl LanguageToolWorker {
                 let address = LanguageToolClient::normalize_address(&address);
                 log::info!("Switching to external LanguageTool server at {address}");
                 self.remote_address = address.clone();
-                client.update_address(&address);
+                provider.update_address(&address);
                 self.use_local_server = false;
                 self.terminate_child();
                 self.consecutive_failures = 0;
-                self.verify_remote(client, runtime);
+                self.verify_remote(provider, runtime);
                 // Remote check invalidates cached text so the next identical
                 // input is re-checked against the new server.
                 *last_text = QString::default();
@@ -474,10 +492,10 @@ impl LanguageToolWorker {
                 log::info!("Restarting local server on port {port}");
                 self.local_port = port;
                 self.use_local_server = true;
-                client.update_address(&self.active_address());
+                provider.update_address(&self.active_address());
                 // Explicit restart gets a fresh failure budget.
                 self.consecutive_failures = 0;
-                self.start_local_server(client, runtime);
+                self.start_local_server(provider, runtime);
                 *last_text = QString::default();
                 Outcome::Continue
             }
@@ -497,9 +515,9 @@ impl LanguageToolWorker {
                     // Requests are currently failing; a new attempt may
                     // recover the (possibly crashed) embedded server.
                     log::info!("Start while FailedToRespond, respawning the local server");
-                    client.update_address(&self.active_address());
+                    provider.update_address(&self.active_address());
                     self.consecutive_failures = 0;
-                    self.start_local_server(client, runtime);
+                    self.start_local_server(provider, runtime);
                     *last_text = QString::default();
                     Outcome::Continue
                 }
@@ -511,8 +529,8 @@ impl LanguageToolWorker {
                     self.use_local_server = true;
                     // A previous remote session may have pointed the client
                     // elsewhere; Start means the embedded server.
-                    client.update_address(&self.active_address());
-                    self.start_local_server(client, runtime);
+                    provider.update_address(&self.active_address());
+                    self.start_local_server(provider, runtime);
                     *last_text = QString::default();
                     Outcome::Continue
                 }
@@ -528,13 +546,13 @@ impl LanguageToolWorker {
                 log::info!("Setting LanguageTool port to {port}");
                 self.local_port = port;
                 if self.use_local_server {
-                    client.update_address(&self.active_address());
+                    provider.update_address(&self.active_address());
                     // New port means a fresh budget.
                     self.consecutive_failures = 0;
                     let was_running =
                         matches!(self.status, WorkerStatus::Started | WorkerStatus::Starting);
                     if was_running {
-                        self.start_local_server(client, runtime);
+                        self.start_local_server(provider, runtime);
                         *last_text = QString::default();
                     } else {
                         // Stay Stopped but re-emit so the UI picks up the
@@ -549,14 +567,16 @@ impl LanguageToolWorker {
                     log::debug!("Retry ignored, already {:?}", self.status);
                     Outcome::Continue
                 }
-                WorkerStatus::Stopped | WorkerStatus::Failed(_) | WorkerStatus::FailedToRespond(_) => {
+                WorkerStatus::Stopped
+                | WorkerStatus::Failed(_)
+                | WorkerStatus::FailedToRespond(_) => {
                     log::info!("Retrying LanguageTool server at {}", self.active_address());
                     self.consecutive_failures = 0;
                     if self.use_local_server {
-                        client.update_address(&self.active_address());
-                        self.start_local_server(client, runtime);
+                        provider.update_address(&self.active_address());
+                        self.start_local_server(provider, runtime);
                     } else {
-                        self.verify_remote(client, runtime);
+                        self.verify_remote(provider, runtime);
                     }
                     *last_text = QString::default();
                     Outcome::Continue
@@ -568,9 +588,15 @@ impl LanguageToolWorker {
     /// Verify a remote server without spawning anything.
     fn verify_remote(
         &mut self,
-        client: &mut LanguageToolClient,
+        provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) {
+        // No remote to reach: every lifecycle event settles through the
+        // normal success bookkeeping (set by construction, never queried).
+        if !self.server_required {
+            self.record_success();
+            return;
+        }
         // Remember whether we are re-checking a connection that was already
         // up before (a retry during an outage): when that check fails, the
         // status must return to `FailedToRespond` (still probing as the user
@@ -587,7 +613,7 @@ impl LanguageToolWorker {
             match self.event_receiver.recv_timeout(Duration::from_millis(300)) {
                 Ok(LanguageToolWorkerEvent::UpdateSuggestions(_)) => continue,
                 Ok(LanguageToolWorkerEvent::UpdateColors(colors)) => {
-                    client.set_colors(colors);
+                    provider.set_colors(colors);
                     continue;
                 }
                 Ok(LanguageToolWorkerEvent::Kill) => {
@@ -611,14 +637,14 @@ impl LanguageToolWorker {
                 }
                 Err(_) => {}
             }
-            if runtime.block_on(client.health_check()) {
+            if runtime.block_on(provider.health_check()) {
                 self.record_success();
                 return;
             }
         }
         let reason = format!(
             "remote LanguageTool at {} did not answer within {:?}",
-            client.address(),
+            provider.address(),
             self.startup_timeout
         );
         if was_active {
@@ -634,9 +660,17 @@ impl LanguageToolWorker {
 
     fn start_local_server(
         &mut self,
-        client: &mut LanguageToolClient,
+        provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) {
+        // No java to spawn and no health to verify; jump straight to the
+        // success bookkeeping (Stopped -> Started, zero-latency). Set by
+        // construction, never queried at runtime.
+        if !self.server_required {
+            self.record_success();
+            return;
+        }
+
         // Outer entry: Starting, spawn, then verify (abortable).
         self.emit_status(WorkerStatus::Starting);
         // `start_local_server` may be re-entered via Aborted events; loop
@@ -650,8 +684,8 @@ impl LanguageToolWorker {
             // a standalone server) is used as-is; anything else goes down
             // the usual failure path, consuming a failure budget entry.
             if !Self::port_is_free(self.local_port) {
-                client.update_address(&self.active_address());
-                if runtime.block_on(client.health_check()) {
+                provider.update_address(&self.active_address());
+                if runtime.block_on(provider.health_check()) {
                     log::info!(
                         "adopting LanguageTool already running on port {}",
                         self.local_port
@@ -675,7 +709,7 @@ impl LanguageToolWorker {
             };
             self.local_server_handle = Some(child);
 
-            match self.wait_until_ready(client, runtime) {
+            match self.wait_until_ready(provider, runtime) {
                 VerifyOutcome::Ready => {
                     self.record_success();
                     return;
@@ -708,7 +742,7 @@ impl LanguageToolWorker {
                     );
 
                     let mut empty_string = QString::default();
-                    let outcome = self.process_event(event, client, runtime, &mut empty_string);
+                    let outcome = self.process_event(event, provider, runtime, &mut empty_string);
                     if matches!(outcome, Outcome::Stop) {
                         let _ = self.event_sender.send(LanguageToolWorkerEvent::Kill);
                         return;
@@ -738,7 +772,7 @@ impl LanguageToolWorker {
     /// Poll `health_check` until ready/timeout, aborting on lifecycle events.
     fn wait_until_ready(
         &mut self,
-        client: &mut LanguageToolClient,
+        provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) -> VerifyOutcome {
         let deadline = Instant::now() + self.startup_timeout;
@@ -749,7 +783,7 @@ impl LanguageToolWorker {
                     continue;
                 }
                 Ok(LanguageToolWorkerEvent::UpdateColors(colors)) => {
-                    client.set_colors(colors);
+                    provider.set_colors(colors);
                     continue;
                 }
                 Ok(LanguageToolWorkerEvent::Kill) => return VerifyOutcome::Killed,
@@ -765,7 +799,7 @@ impl LanguageToolWorker {
                 Err(_) => {}
             }
 
-            if runtime.block_on(client.health_check()) {
+            if runtime.block_on(provider.health_check()) {
                 return VerifyOutcome::Ready;
             }
         }
@@ -968,10 +1002,12 @@ impl LanguageToolWorker {
     }
 }
 
+// Tests for ensure_server_properties: verifies deployment-layout detection
+// logic. Kept here (not in tests/unit/) because the function is private and
+// the tests exercise internal path resolution that matters for correctness.
 #[cfg(test)]
 mod tests {
-    use super::LanguageToolWorker;
-    use std::path::PathBuf;
+    use super::*;
 
     fn scratch_dir(name: &str) -> PathBuf {
         let dir =
@@ -1050,26 +1086,5 @@ mod tests {
 
         assert!(!lt_dir.join("server.properties").exists());
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn bound_port_reports_as_busy() {
-        // Grab any free ephemeral port and hold it: adoption must NOT
-        // consider it free while the socket stays open.
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        assert!(!LanguageToolWorker::port_is_free(port));
-    }
-
-    #[test]
-    fn released_port_reports_as_free() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-
-        // The bind in port_is_free re-claims the just-released port, so this
-        // also proves the helper itself works on a real bindable port.
-        assert!(LanguageToolWorker::port_is_free(port));
     }
 }

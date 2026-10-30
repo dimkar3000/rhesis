@@ -7,7 +7,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # Shared build step (also used by test.yml): builds the app + fastText +
+  # language model + LanguageTool + trimmed JRE and caches the tree. The
+  # packaging job below restores it instead of rebuilding.
+  app:
+    uses: ./.github/workflows/build-app.yml
+    with:
+      mode: release
+      profile: auto
+
+  package:
+    needs: [app]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
@@ -18,6 +28,8 @@ jobs:
       # committed .ts files only (the container's lupdate lacks QML support
       # and would otherwise empty them). Local builds still run lupdate.
       SKIP_LUPDATE: 1
+      # The profile the shared build used; packaging scripts must match it.
+      RUST_BUILD_TYPE: ${{ needs.app.outputs.profile }}
 
     steps:
       - uses: actions/checkout@v4
@@ -37,19 +49,18 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
         run: ./scripts/check-versions.sh
 
-      - name: Determine build profile
-        id: profile
-        run: |
-          if [[ "${{ github.ref_name }}" == v*-* ]]; then
-            echo "profile=release-fast" >> "$GITHUB_OUTPUT"
-          else
-            echo "profile=release" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build artifacts
-        env:
-          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
-        run: ./scripts/build-common.sh --verbose --no-spinner
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ needs.app.outputs.cache-key }}
 
       - name: Build Flatpak
         run: ./scripts/build-flatpak.sh --verbose --no-spinner --no-runtimes
@@ -63,13 +74,9 @@ jobs:
             --no-spinner
 
       - name: Build desktop tarball (global)
-        env:
-          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
         run: ./scripts/build-desktop.sh --verbose --no-spinner
 
       - name: Build desktop tarball (local)
-        env:
-          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
         run: ./scripts/build-desktop.sh --local --verbose --no-spinner
 
       - name: Upload Flatpak artifact
@@ -91,7 +98,7 @@ jobs:
           path: build/artifacts/desktop/*.tar.gz
 
   release:
-    needs: [build]
+    needs: [package]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

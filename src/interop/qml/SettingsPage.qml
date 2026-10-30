@@ -294,6 +294,9 @@ Kirigami.Page {
     // viewport width so only vertical scrolling happens.
     Flickable {
         id: pageFlickable
+        // Named for tests: the rule rows sit below the fold, so a suite that
+        // documents them scrolls here before grabbing the page.
+        objectName: "settingsFlickable"
         anchors.fill: parent
         contentWidth: width
         contentHeight: colorsCol.y + colorsCol.height + Kirigami.Units.smallSpacing
@@ -436,6 +439,8 @@ Kirigami.Page {
 
             Controls.Switch {
                 id: autostartSwitch
+                // Named for the page-level suite (tests/ui/tst_settings.qml).
+                objectName: "autostartSwitch"
                 Kirigami.FormData.label: qsTr("autostart_switch_label")
                 checked: localAutostartSwitch
                 onToggled: {
@@ -462,6 +467,7 @@ Kirigami.Page {
 
             Controls.Switch {
                 id: backgroundSwitch
+                objectName: "backgroundSwitch"
                 Kirigami.FormData.label: qsTr("background_switch_label")
                 // Only the embedded server can be hosted in the background;
                 // external servers are shared machines of their own. While
@@ -490,6 +496,7 @@ Kirigami.Page {
 
             Controls.Switch {
                 id: tooltipSwitch
+                objectName: "tooltipSwitch"
                 Kirigami.FormData.label: qsTr("enable_tooltip_label")
                 checked: localTooltipSwitch
                 onToggled: localTooltipSwitch = checked
@@ -573,6 +580,7 @@ Kirigami.Page {
         }
 
         Controls.Button {
+            objectName: "addRuleButton"
             icon.name: "list-add"
             text: qsTr("add_filter_button")
             onClicked: {

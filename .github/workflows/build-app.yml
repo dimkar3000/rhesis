@@ -1,0 +1,143 @@
+name: Build app
+
+# Shared build step for every pipeline. Callers ask for a mode and get a
+# populated build tree back through the cache:
+#
+#   test    — `cargo test --no-run`, i.e. every test target plus the app and
+#             the QML runner, compiled once. The test job then only runs the
+#             binaries.
+#   release — `scripts/build-common.sh`: the app (CMake + cargo), fastText,
+#             the language model, LanguageTool and the trimmed JRE, exactly
+#             what the packaging steps consume.
+#
+# Both modes use the same cache layout, keyed by profile and Cargo.lock, so
+# a consuming job restores the tree instead of rebuilding it. A caller
+# restores with `actions/cache/restore` using the `cache-key` output.
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "test (prebuild debug test binaries) or release (packaged build)"
+        required: false
+        type: string
+        default: test
+      profile:
+        description: "Cargo profile; auto = release-fast for v*-* tags, release otherwise"
+        required: false
+        type: string
+        default: auto
+    outputs:
+      cache-key:
+        description: "Key of the cache this build populated"
+        value: ${{ jobs.build.outputs.cache-key }}
+      profile:
+        description: "Effective Cargo profile (debug, release, release-fast)"
+        value: ${{ jobs.build.outputs.profile }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    env:
+      SKIP_LUPDATE: 1
+      # Incremental artifacts are useless across runs and dwarf the cache.
+      CARGO_INCREMENTAL: 0
+      # CI test artifacts do not need line tables; the assertions carry the
+      # diagnostics. Keeping debug info off cuts the cache by gigabytes.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.save-key }}
+      profile: ${{ steps.profile.outputs.profile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Release builds regenerate metainfo dates from historic tags;
+          # Cargo.lock hashing needs only the checkout itself.
+          fetch-depth: 0
+
+      - name: Allow git in container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Resolve profile
+        id: profile
+        run: |
+          profile="${{ inputs.profile }}"
+          if [ "${{ inputs.mode }}" = "test" ]; then
+            profile=debug
+          elif [ "$profile" = "auto" ]; then
+            case "$GITHUB_REF_NAME" in
+              v*-*) profile=release-fast ;;
+              *)    profile=release ;;
+            esac
+          fi
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+
+      - name: Cache key
+        id: cache-key
+        run: |
+          # Cargo.lock pins the dependency graph, so the restore key is
+          # stable across source commits: cargo rebuilds only the crates that
+          # changed. The save key adds the run id, because the consuming job
+          # must restore the tree THIS run produced — a stable save key would
+          # pin the cache to the first commit with that lockfile and hand the
+          # packaging job an app built from older sources.
+          base="rhesis-${{ runner.os }}-${{ steps.profile.outputs.profile }}-${{ hashFiles('Cargo.lock') }}"
+          echo "restore-key=$base" >> "$GITHUB_OUTPUT"
+          echo "save-key=$base-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache paths
+        id: cache-paths
+        run: |
+          # Only list what the mode produces: actions/cache warns about every
+          # missing path, and a test build has no packaging tree.
+          {
+            echo "paths<<EOF"
+            echo "~/.cargo/registry"
+            echo "~/.cargo/git"
+            if [ "${{ inputs.mode }}" = "release" ]; then
+              # build-common builds through CMake, which passes
+              # --target-dir build/cmake-build, so the release Cargo tree
+              # lives there, not in build/target.
+              echo "build/cmake-build"
+              echo "build/artifacts"
+              echo "build/fasttext-src"
+              echo "build/LanguageTool-6.6.zip"
+              echo "build/lid.176.ftz"
+            else
+              echo "build/target"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.cache-paths.outputs.paths }}
+          key: ${{ steps.cache-key.outputs.restore-key }}
+          restore-keys: |
+            ${{ steps.cache-key.outputs.restore-key }}-
+            rhesis-${{ runner.os }}-${{ steps.profile.outputs.profile }}-
+
+      - name: Build test binaries
+        if: inputs.mode == 'test'
+        env:
+          # `.cargo/config.toml` is gitignored, so a clean CI checkout has no
+          # target-dir override: name it here to match the cached path.
+          CARGO_TARGET_DIR: build/target
+        run: cargo test --no-run
+
+      - name: Build release artifacts
+        if: inputs.mode == 'release'
+        env:
+          RUST_BUILD_TYPE: ${{ steps.profile.outputs.profile }}
+        run: ./scripts/build-common.sh --verbose --no-spinner
+
+      # Always save: the consumer must get this run's tree, not the older
+      # entry the restore step reused for speed.
+      - name: Save build cache
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.cache-paths.outputs.paths }}
+          key: ${{ steps.cache-key.outputs.save-key }}

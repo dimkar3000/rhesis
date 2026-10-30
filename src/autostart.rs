@@ -68,7 +68,9 @@ fn launcher_for(exe: &Path) -> Option<String> {
     let rhesis_dir = exe.parent()?.parent()?; // <base>/rhesis
     let base = rhesis_dir.parent()?; // e.g. /usr/share or ~/.local/share
     let launcher = base.parent()?.join("bin").join("rhesis"); // e.g. /usr/bin/rhesis
-    launcher.is_file().then(|| launcher.to_string_lossy().to_string())
+    launcher
+        .is_file()
+        .then(|| launcher.to_string_lossy().to_string())
 }
 
 /// Build the `Exec` line for the current install flavor. Flatpak is detected
@@ -91,8 +93,7 @@ fn exec_command() -> String {
         Ok(exe) => {
             // Prefer the sibling launcher on native installs — see
             // launcher_for for why the payload alone is not self-sufficient.
-            let path = launcher_for(&exe)
-                .unwrap_or_else(|| exe.to_string_lossy().to_string());
+            let path = launcher_for(&exe).unwrap_or_else(|| exe.to_string_lossy().to_string());
             if path.is_empty() {
                 format!("{APP_ID} {HIDDEN_FLAG}")
             } else {
@@ -298,7 +299,10 @@ mod tests {
         fs::create_dir_all(launcher.parent().expect("launcher has a parent"))
             .expect("scratch dirs are creatable");
         fs::write(&launcher, b"#!/bin/sh\n").expect("scratch launcher writable");
-        assert_eq!(launcher_for(Path::new(&exe)), Some(launcher.to_string_lossy().to_string()));
+        assert_eq!(
+            launcher_for(Path::new(&exe)),
+            Some(launcher.to_string_lossy().to_string())
+        );
 
         // Global layout: /usr/share/rhesis/bin/rhesis → /usr/bin/rhesis.
         let global_exe = scratch.join("usr/share/rhesis/bin/rhesis");
@@ -319,8 +323,14 @@ mod tests {
 
     #[test]
     fn exec_escape_quotes_paths_with_spaces() {
-        assert_eq!(exec_escape("/opt/No Spaces/rhesis"), format!("\"/opt/No Spaces/rhesis\" {HIDDEN_FLAG}"));
-        assert_eq!(exec_escape("/opt/rhesis"), format!("/opt/rhesis {HIDDEN_FLAG}"));
+        assert_eq!(
+            exec_escape("/opt/No Spaces/rhesis"),
+            format!("\"/opt/No Spaces/rhesis\" {HIDDEN_FLAG}")
+        );
+        assert_eq!(
+            exec_escape("/opt/rhesis"),
+            format!("/opt/rhesis {HIDDEN_FLAG}")
+        );
     }
 
     #[test]
@@ -348,26 +358,36 @@ mod tests {
     #[test]
     fn appimage_exec_lines_are_recognized() {
         // Both quoting forms our writer produces.
-        assert!(is_appimage_exec(&format!("/apps/rhesis-0.5.0-x86_64.AppImage {HIDDEN_FLAG}")));
+        assert!(is_appimage_exec(&format!(
+            "/apps/rhesis-0.5.0-x86_64.AppImage {HIDDEN_FLAG}"
+        )));
         assert!(is_appimage_exec(&format!(
             "\"/apps/My Images/rhesis-x86_64.AppImage\" {HIDDEN_FLAG}"
         )));
 
         // Case-insensitivity: the file was moved with different casing.
-        assert!(is_appimage_exec(&format!("/apps/Rhesis.AppImage {HIDDEN_FLAG}")));
+        assert!(is_appimage_exec(&format!(
+            "/apps/Rhesis.AppImage {HIDDEN_FLAG}"
+        )));
 
         // Not an AppImage (a native launcher or flatpak exec): the heal
         // must never rewrite entries of other flavors — those go through
         // the honest-toggle path instead.
-        assert!(!is_appimage_exec(&format!("/gone/.local/bin/rhesis {HIDDEN_FLAG}")));
-        assert!(!is_appimage_exec(&format!("flatpak run {APP_ID} {HIDDEN_FLAG}")));
+        assert!(!is_appimage_exec(&format!(
+            "/gone/.local/bin/rhesis {HIDDEN_FLAG}"
+        )));
+        assert!(!is_appimage_exec(&format!(
+            "flatpak run {APP_ID} {HIDDEN_FLAG}"
+        )));
 
         // Autostart intent missing — not a form we wrote (no hidden flag).
         assert!(!is_appimage_exec("/apps/rhesis.AppImage"));
 
         // Arbitrary rename with no rhesis string left in the filename is
         // unrecognized by design (stays stale-but-honest).
-        assert!(!is_appimage_exec(&format!("/apps/myapp.AppImage {HIDDEN_FLAG}")));
+        assert!(!is_appimage_exec(&format!(
+            "/apps/myapp.AppImage {HIDDEN_FLAG}"
+        )));
     }
 
     #[test]
@@ -386,9 +406,8 @@ mod tests {
         fs::write(&file, &stale).expect("scratch entry writable");
 
         let current = "/new/Applications/rhesis-0.5.0-x86_64.AppImage".to_string();
-        assert_eq!(
+        assert!(
             heal_appimage_entry(&file, &exec_escape(&current)),
-            true,
             "a stale AppImage entry is a heal target"
         );
 
@@ -396,7 +415,10 @@ mod tests {
         // toggle reads it as ours again.
         let healed = fs::read_to_string(&file).expect("healed entry readable");
         assert!(is_our_entry(&healed), "healed entry must read as enabled");
-        assert_eq!(exec_line(&healed), Some(exec_line(&entry_contents()).expect("our entry has an Exec line")));
+        assert_eq!(
+            exec_line(&healed),
+            Some(exec_line(&entry_contents()).expect("our entry has an Exec line"))
+        );
 
         let _ = fs::remove_dir_all(&scratch);
     }
@@ -432,7 +454,10 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).expect("entry readable"), contents);
 
         // Missing file / missing Exec line are silent no-ops, not errors.
-        assert!(!heal_appimage_entry(&scratch.join("absent.desktop"), &current_exec));
+        assert!(!heal_appimage_entry(
+            &scratch.join("absent.desktop"),
+            &current_exec
+        ));
         let file = scratch.join("no-exec.desktop");
         fs::write(&file, "[Desktop Entry]\nType=Application\nName=Rhesis\n").unwrap();
         assert!(!heal_appimage_entry(&file, &current_exec));

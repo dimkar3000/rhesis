@@ -78,28 +78,10 @@ impl LanguageToolClient {
         }
     }
 
-    fn select_color(&self, rule_id: QString, category_id: QString) -> QString {
-        let mut color = QString::from("#FF0000");
-
-        let category_key = format!("CATEGORY:{}", category_id);
-        if self.rules.contains_key(&category_key) {
-            color = self.rules[&category_key].clone();
-        }
-
-        let rule_key = format!("RULE:{}", rule_id);
-        if self.rules.contains_key(&rule_key) {
-            color = self.rules[&rule_key].clone();
-        }
-
-        log::debug!("Color Selected: {}", color);
-        log::debug!("Category: {}", category_key);
-        log::debug!("Rule: {}", rule_key);
-        log::debug!("Rules: {:?}", self.rules);
-
-        color
-    }
-
-    pub async fn get_recommendation(&self, input: impl AsRef<str>) -> Result<Vec<Recommendation>, String> {
+    pub async fn get_recommendation(
+        &self,
+        input: impl AsRef<str>,
+    ) -> Result<Vec<Recommendation>, String> {
         let input = input.as_ref();
 
         let client = reqwest::Client::new();
@@ -136,31 +118,70 @@ impl LanguageToolClient {
             }
         };
 
-        let lang_tag = body.language.code.to_uppercase();
-        let recommendations = body.matches
-            .into_iter()
-            .flat_map(|x| {
-                let lang_tag = lang_tag.clone();
-                x.replacements
-                    .into_iter()
-                    .map(move |replacement| Recommendation {
-                        color: self.select_color(
-                            QString::from(x.rule.id.as_ref()),
-                            QString::from(x.rule.category.id.as_ref()),
-                        ),
-                        range: Range {
-                            start: x.offset,
-                            length: x.length,
-                        },
-                        value: QString::from(replacement.value.as_ref()),
-                        category_id: QString::from(x.rule.category.id.as_ref()),
-                        rule_id: QString::from(x.rule.id.as_ref()),
-                        tooltip: QString::from(x.message.as_ref()),
-                        language: QString::from(&lang_tag),
-                    })
-            })
-            .collect::<Vec<_>>();
+        let recommendations = map_dto(body, &self.rules);
 
         Ok(recommendations)
     }
+}
+
+/// Convert a LanguageTool response body into UI recommendations using the
+/// given color rules. Shared by the live client (HTTP answers) and the fake
+/// provider (recorded fixtures), so fixtures carry the real conversion.
+pub(crate) fn map_dto(
+    body: LanguageToolDto,
+    rules: &HashMap<String, QString>,
+) -> Vec<Recommendation> {
+    let lang_tag = body.language.code.to_uppercase();
+    let recommendations = body
+        .matches
+        .into_iter()
+        .flat_map(|x| {
+            let lang_tag = lang_tag.clone();
+            x.replacements
+                .into_iter()
+                .map(move |replacement| Recommendation {
+                    color: select_color(
+                        rules,
+                        QString::from(x.rule.id.as_ref()),
+                        QString::from(x.rule.category.id.as_ref()),
+                    ),
+                    range: Range {
+                        start: x.offset,
+                        length: x.length,
+                    },
+                    value: QString::from(replacement.value.as_ref()),
+                    category_id: QString::from(x.rule.category.id.as_ref()),
+                    rule_id: QString::from(x.rule.id.as_ref()),
+                    tooltip: QString::from(x.message.as_ref()),
+                    language: QString::from(&lang_tag),
+                })
+        })
+        .collect::<Vec<_>>();
+
+    recommendations
+}
+
+fn select_color(
+    rules: &HashMap<String, QString>,
+    rule_id: QString,
+    category_id: QString,
+) -> QString {
+    let mut color = QString::from("#FF0000");
+
+    let category_key = format!("CATEGORY:{}", category_id);
+    if rules.contains_key(&category_key) {
+        color = rules[&category_key].clone();
+    }
+
+    let rule_key = format!("RULE:{}", rule_id);
+    if rules.contains_key(&rule_key) {
+        color = rules[&rule_key].clone();
+    }
+
+    log::debug!("Color Selected: {}", color);
+    log::debug!("Category: {}", category_key);
+    log::debug!("Rule: {}", rule_key);
+    log::debug!("Rules: {:?}", rules);
+
+    color
 }

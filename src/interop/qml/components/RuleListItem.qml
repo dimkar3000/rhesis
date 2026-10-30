@@ -58,6 +58,9 @@ RowLayout {
 
     Controls.TextField {
         id: ruleTextField
+        // Named for tests — every rule row carries one, so suites collect
+        // all matches instead of assuming a single hit.
+        objectName: "ruleTextField"
         Layout.fillWidth: true
         Layout.preferredHeight: ruleTypeCombo.height
         placeholderText: qsTr("filter_text_placeholder")
@@ -117,6 +120,7 @@ RowLayout {
     }
 
     Controls.Button {
+        objectName: "removeRuleButton"
         icon.name: "list-remove"
         Layout.preferredWidth: 32
         Layout.preferredHeight: 32

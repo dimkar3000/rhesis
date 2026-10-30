@@ -7,7 +7,7 @@ fn main() {
         .expect("invalid glob pattern for QML sources (src/interop/qml/**/*.qml)");
 
     unsafe {
-        CxxQtBuilder::new_qml_module(module.qml_files(paths.map(|x| {
+        let mut builder = CxxQtBuilder::new_qml_module(module.qml_files(paths.map(|x| {
             x.expect("failed to read a QML source entry matched by the glob")
                 .to_str()
                 .expect("QML source path is not valid UTF-8")
@@ -16,12 +16,30 @@ fn main() {
         .qt_module("Gui")
         .qt_module("Quick")
         .crate_include_root(Some("src/interop/cpp".to_string()))
-        .files(["src/interop/bridge.rs"])
-        .qrc("resources.qrc")
-        .cc_builder(|a| {
-            a.flag_if_supported("-w"); // Disabled warning from qt code base. We cannot fix those.
-            a.debug(false); // Skip -g for generated C++, not match we can do with this either.
-        })
-        .build();
+        .files(["src/interop/bridge.rs"]);
+
+        // The QtQuickTest module and C++ probes are always compiled so that
+        // test targets (ui-boot, rhesis-ui-runner) can link them without a
+        // feature gate. The shipped binary never references these symbols,
+        // so they add nothing to the production artifact.
+        builder = builder.qt_module("QuickTest").cc_builder(|a| {
+            // Warnings from the Qt code base are not ours to fix.
+            a.flag_if_supported("-w");
+            // Skip -g for generated C++, which we cannot influence otherwise.
+            a.debug(false);
+            // quick_test_main is a plain exported Qt function that is only
+            // reachable through its C++-mangled symbol; the wrapper keeps the
+            // mangling off the Rust side by exposing a stable extern "C"
+            // symbol instead.
+            a.file("src/ui_tests/wrapper.cpp");
+            // Probes for the full-boot E2E tier (see the file's own header):
+            // plain extern "C" helpers around QQmlApplicationEngine,
+            // QQmlExpression and QQuickWindow::grabWindow, so
+            // tests/e2e/ui_boot.rs can drive the real UI without any
+            // production bridge changes.
+            a.file("src/ui_tests/harness.cpp");
+        });
+
+        builder.qrc("resources.qrc").build();
     }
 }

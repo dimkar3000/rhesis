@@ -23,8 +23,10 @@ find_package(Qt6 COMPONENTS LinguistTools QUIET)
 set(CARGO_BUILD_PROFILE "release" CACHE STRING "Cargo build profile (release, release-fast, debug)")
 
 # --- Build the Rust binary ---
+# Packaging needs the app binary only; the QML-test runner binary
+# (`rhesis-ui-runner`) is built by `cargo test` when it is needed.
 add_custom_target(rhesis_build ALL
-    COMMAND cargo build 
+    COMMAND cargo build --bin rhesis
         --profile ${CARGO_BUILD_PROFILE} 
         --target-dir ${CMAKE_CURRENT_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

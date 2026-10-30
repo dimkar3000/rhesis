@@ -23,10 +23,10 @@ use std::{
 
 /// Reserved-only app id: doubles as the abstract socket name, which stays
 /// well below the 107-byte socket address limit.
-const SOCKET_NAME: &[u8] = b"io.github.dimkar3000.rhesis";
+pub const SOCKET_NAME: &[u8] = b"io.github.dimkar3000.rhesis";
 
 /// Payload a secondary instance sends to the primary one.
-const SHOW_REQUEST: &[u8] = b"show\n";
+pub const SHOW_REQUEST: &[u8] = b"show\n";
 
 /// Bound while acquiring, consumed by `spawn_runner` afterwards: the listener
 /// has to come up before any UI does (a second launch happening during the
@@ -153,29 +153,4 @@ fn handle_stream(
         Err(e) => log::debug!("single-instance request read failed: {e:?}"),
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn socket_name_is_within_linux_limits() {
-        // Abstract socket names are limited to 107 bytes (address struct,
-        // including the leading NUL); attempting to bind a longer name
-        // would panic in socket_addr().
-        assert!(SOCKET_NAME.len() < 107);
-        let _ = socket_addr();
-    }
-
-    #[test]
-    fn show_request_matches_the_trimmed_payload() {
-        let request = SHOW_REQUEST.trim_ascii();
-        assert_eq!(request, b"show");
-        // handle_stream reads into a zeroed 16-byte buffer; the comparison
-        // depends on the prefix logic staying correct for short payloads.
-        let mut buffer = [0u8; 16];
-        buffer[..request.len()].copy_from_slice(request);
-        assert!(buffer.starts_with(request));
-    }
 }

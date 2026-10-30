@@ -23,11 +23,13 @@ serde_json = "1.0"
 
 tokio = { version = "1.52.3", features = ["full", "sync"] }
 
-[features]
-# UI-test harness only: adds the Qt Quick Test runner binary with its
-# QtQuickTest linkage. Release/default builds never enable it, so shipped
-# binaries keep the exact dependencies they had before.
-ui-harness = []
+[[bin]]
+name = "rhesis"
+path = "src/main.rs"
+
+[[bin]]
+name = "rhesis-ui-runner"
+path = "src/bin/rhesis-ui-runner.rs"
 
 [profile.release]
 opt-level = 3
@@ -48,3 +50,57 @@ cxx-qt-build = { version = "0.9.0", features = ["link_qt_object_files"] }
 glob = "0.3.3"
 
 [dev-dependencies]
+
+# Test targets are declared explicitly: the files live in tests/unit/ and
+# tests/e2e/ rather than directly in tests/, so cargo cannot auto-discover
+# them. A new test file needs its [[test]] entry or it never runs.
+
+# --- E2E tiers (whole process, real Qt) -------------------------------------
+
+# Boots the real Root.qml through the production sequence (C++ probes come
+# from src/ui_tests/harness.cpp, compiled by build.rs).
+[[test]]
+name = "ui-boot"
+path = "tests/e2e/ui_boot.rs"
+
+# QML page suites (tests/ui/*.qml) via the Qt Quick Test runner binary.
+[[test]]
+name = "qml-suites"
+path = "tests/e2e/qml_suites.rs"
+
+# Two real binary launches: the single-instance guard.
+[[test]]
+name = "single-instance-e2e"
+path = "tests/e2e/single_instance_e2e.rs"
+
+# --- Unit tiers (public API, no Qt application) -----------------------------
+
+# LanguageTool client: mock HTTP server, DTO -> Recommendation mapping.
+[[test]]
+name = "languagetool-client"
+path = "tests/unit/languagetool_client.rs"
+
+# LanguageTool worker: event loop, status transitions, debounce (mock server).
+[[test]]
+name = "languagetool-service"
+path = "tests/unit/languagetool_service.rs"
+
+# LanguageTool DTO: serde round-trip against a recorded response.
+[[test]]
+name = "languagetool-models"
+path = "tests/unit/languagetool_models.rs"
+
+# Recommendation -> QML conversion.
+[[test]]
+name = "recommendation"
+path = "tests/unit/recommendation.rs"
+
+# Async messaging helper: worker lifecycle, status mirroring, forwarding.
+[[test]]
+name = "async-messaging-helper"
+path = "tests/unit/async_messaging_helper.rs"
+
+# Single-instance guard: socket naming, show request payload.
+[[test]]
+name = "single-instance"
+path = "tests/unit/single_instance.rs"

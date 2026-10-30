@@ -37,3 +37,22 @@ impl From<&Recommendation> for QVariant {
         QVariant::from(&map)
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    //! Shared recommendation fixtures for the sink/spy, worker-loop and
+    //! provider suites, so every module's tests speak the same shape.
+
+    use super::{Range, Recommendation};
+    use cxx_qt_lib::QString;
+
+    /// A one-word recommendation at `start` — the minimal suggestion shape
+    /// the rendering pipeline consumes (a range to paint + a replacement).
+    pub(crate) fn one_word(start: i32, value: &str) -> Recommendation {
+        Recommendation {
+            value: QString::from(value),
+            range: Range { start, length: 1 },
+            ..Default::default()
+        }
+    }
+}

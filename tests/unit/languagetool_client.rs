@@ -141,7 +141,10 @@ async fn returns_recommendations_from_server() {
     )));
 
     let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
-    let recommendations = client.get_recommendation("some misspelled text").await.unwrap();
+    let recommendations = client
+        .get_recommendation("some misspelled text")
+        .await
+        .unwrap();
 
     assert_eq!(recommendations.len(), 2, "one match with two replacements");
     let first = &recommendations[0];
@@ -332,4 +335,32 @@ async fn update_colors_takes_effect_immediately() {
     )]);
     let recommendations = client.get_recommendation("text").await.unwrap();
     assert_eq!(recommendations[0].color.to_string(), "#ff0001");
+}
+
+#[test]
+fn normalize_address_keeps_and_adds_schemes() {
+    assert_eq!(
+        LanguageToolClient::normalize_address(" http://localhost:2689/ "),
+        "http://localhost:2689"
+    );
+    assert_eq!(
+        LanguageToolClient::normalize_address("localhost:2689//"),
+        "http://localhost:2689"
+    );
+    assert_eq!(
+        LanguageToolClient::normalize_address("https://lt.example.com"),
+        "https://lt.example.com"
+    );
+    assert_eq!(
+        LanguageToolClient::normalize_address("unix:"),
+        "http://unix:"
+    );
+}
+
+#[test]
+fn client_addresses_normalize_on_construction_and_update() {
+    let mut client = LanguageToolClient::new("localhost:2689/");
+    assert_eq!(client.address(), "http://localhost:2689");
+    client.update_address("https://lt.example.com////");
+    assert_eq!(client.address(), "https://lt.example.com");
 }

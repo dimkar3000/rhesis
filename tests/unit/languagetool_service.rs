@@ -1,9 +1,12 @@
+//! LanguageTool worker: debounce, dedupe, status transitions, teardown.
+//!
+//! Every test here is hermetic: the worker talks to a mock HTTP listener on
+//! localhost, never to a java-spawned LanguageTool server. Server boot
+//! against a real installation is out of scope by design (see `AGENTS.md`).
+
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    net::TcpStream,
-    path::Path,
-    process::Command,
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     thread,
@@ -17,6 +20,12 @@ use rhesis::languagetool::service::{
     MAX_START_FAILURES,
 };
 
+// Note: the `ensure_server_properties` tests were moved back to
+// `src/languagetool/service.rs` because they exercise private layout-detection
+// logic that matters for deployment correctness. The `port_is_free` tests
+// were removed — they test stdlib `TcpListener::bind`, not Rhesis-specific
+// behavior.
+
 fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
@@ -26,36 +35,6 @@ fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) -> bool {
         thread::sleep(Duration::from_millis(50));
     }
     predicate()
-}
-
-fn wait_for_server(port: u16, timeout: Duration) -> bool {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        if TcpStream::connect(("localhost", port)).is_ok() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(300));
-    }
-    false
-}
-
-/// The embedded server needs a java runtime and a LanguageTool installation
-/// (jar plus server.properties, without which the JVM exits immediately).
-/// Accepts both the setup.sh layout and the build-common.sh artifacts layout.
-fn language_tool_available() -> bool {
-    for dir in ["./build/LanguageTool", "./build/artifacts/LanguageTool"] {
-        if Path::new(&format!("{dir}/languagetool-server.jar")).exists()
-            && Path::new(&format!("{dir}/server.properties")).exists()
-        {
-            if Command::new("java").arg("-version").output().is_ok() {
-                return true;
-            }
-            eprintln!("skipping: java not found");
-            return false;
-        }
-    }
-    eprintln!("skipping: LanguageTool not found in ./build/LanguageTool or ./build/artifacts/LanguageTool");
-    false
 }
 
 fn start_worker() -> WorkerHandles {
@@ -229,9 +208,9 @@ fn empty_and_whitespace_text_produce_no_suggestions() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port}"
+        )))
         .unwrap();
     assert!(
         wait_for_status(
@@ -267,9 +246,9 @@ fn repeated_text_is_deduplicated() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port}"
+        )))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -308,9 +287,9 @@ fn suggestions_flow_against_mock_server() {
 
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port}"
+        )))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -362,9 +341,9 @@ fn stop_event_reports_stopped() {
     let handles = start_worker();
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port}"
+        )))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -485,9 +464,9 @@ fn setport_while_started_restarts() {
 
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port_a}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port_a}"
+        )))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -499,9 +478,9 @@ fn setport_while_started_restarts() {
     // Point the client at the second mock; suggestions must keep flowing.
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port_b}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port_b}"
+        )))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -531,18 +510,16 @@ fn remote_outage_flips_status_and_recovers() {
 
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(
-            format!("localhost:{port}"),
-        ))
+        .send(LanguageToolWorkerEvent::SwitchToRemoteServer(format!(
+            "localhost:{port}"
+        )))
         .unwrap();
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(10)
-        )
-        .is_some()
-    );
+    assert!(wait_for_status(
+        &handles,
+        |s| matches!(s, WorkerStatus::Started),
+        Duration::from_secs(10)
+    )
+    .is_some());
 
     // A successful request keeps the status untouched.
     handles
@@ -631,102 +608,4 @@ fn remote_outage_flips_status_and_recovers() {
     assert!(recv_suggestion(&handles, Duration::from_secs(10)).is_some());
 
     kill(&handles);
-}
-
-#[test]
-fn embedded_server_delivers_recommendations() {
-    if !language_tool_available() {
-        return;
-    }
-
-    let port = 26890;
-    let handles = LanguageToolWorker::default()
-        .start()
-        .expect("worker thread must spawn in tests");
-
-    handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::RestartLocalServer(port))
-        .unwrap();
-
-    assert!(
-        wait_for_server(port, Duration::from_secs(60)),
-        "LanguageTool server did not come up on port {port}"
-    );
-    assert!(
-        wait_for_status(
-            &handles,
-            |s| matches!(s, WorkerStatus::Started),
-            Duration::from_secs(60)
-        )
-        .is_some(),
-        "worker should report Started"
-    );
-    thread::sleep(Duration::from_secs(2));
-
-    handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::UpdateSuggestions(QString::from(
-            "This is a test with a misspelled word teh test.",
-        )))
-        .unwrap();
-
-    match recv_suggestion(&handles, Duration::from_secs(30)) {
-        Some(Suggestion(recommendations)) => {
-            assert!(
-                !recommendations.is_empty(),
-                "expected recommendations from the embedded server"
-            );
-        }
-        None => panic!("expected suggestions, got timeout"),
-    }
-
-    handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::StopLocalServer)
-        .unwrap();
-    kill(&handles);
-}
-
-#[test]
-fn restarting_local_server_respawns_it() {
-    if !language_tool_available() {
-        return;
-    }
-
-    let port = 26891;
-    let handles = LanguageToolWorker::default()
-        .start()
-        .expect("worker thread must spawn in tests");
-
-    handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::RestartLocalServer(port))
-        .unwrap();
-    assert!(wait_for_server(port, Duration::from_secs(60)));
-    assert!(wait_for_status(
-        &handles,
-        |s| matches!(s, WorkerStatus::Started),
-        Duration::from_secs(60)
-    )
-    .is_some());
-
-    // A second restart must be harmless (old process killed, new one started)
-    handles
-        .event_sender
-        .send(LanguageToolWorkerEvent::RestartLocalServer(port))
-        .unwrap();
-    assert!(wait_for_server(port, Duration::from_secs(60)));
-    assert!(wait_for_status(
-        &handles,
-        |s| matches!(s, WorkerStatus::Started),
-        Duration::from_secs(60)
-    )
-    .is_some());
-
-    kill(&handles);
-    assert!(wait_for(
-        || !handles.running.load(Ordering::SeqCst),
-        Duration::from_secs(5)
-    ));
 }

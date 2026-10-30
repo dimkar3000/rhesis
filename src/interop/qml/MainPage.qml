@@ -123,6 +123,8 @@ Kirigami.Page {
 
     Controls.TextArea {
         id: sourceArea
+        // Suites locate the input through this name (see tests/ui), keep it stable.
+        objectName: "checkerTextArea"
         anchors.fill: mainPage.contentItem
         padding: 5
         background: null

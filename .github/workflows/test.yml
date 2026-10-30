@@ -1,0 +1,83 @@
+name: Tests
+
+# Test-only workflow: runs on integration branches and on pull requests into
+# them, never as part of a release build. The release pipeline
+# (build.yml) builds and packages; this one decides whether the code is
+# correct.
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight run on the same ref.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep the environment identical to the build job in build-app.yml, or
+  # cargo fingerprints change and the restored cache is rebuilt.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  # `.cargo/config.toml` is gitignored, so a clean checkout would otherwise
+  # build into `target/`; keep it where build-app.yml caches it.
+  CARGO_TARGET_DIR: build/target
+  SKIP_LUPDATE: 1
+  QT_QPA_PLATFORM: offscreen
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Compile every test binary once in the shared build workflow; the test
+  # job restores that tree instead of building the dependencies again.
+  build:
+    uses: ./.github/workflows/build-app.yml
+    with:
+      mode: test
+
+  test:
+    needs: [build]
+    runs-on: ubuntu-latest
+    container:
+      # Same image as the release build: Qt 6.11 SDK, QuickTest, Kirigami
+      # and the offscreen platform plugin are all present (verified).
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allow git in container workspace
+        # Same UID mismatch as build.yml: the container user does not own
+        # the checkout, so git refuses to work unless told it is safe.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ needs.build.outputs.cache-key }}
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        # `qml_suites_pass` is the only test in the QML page-suite target.
+        # That tier renders screenshots for manual inspection, which is a
+        # local-development tool; CI runs every assertion tier but does not
+        # generate images. Run it locally with:
+        #   cargo test --test qml-suites
+        run: cargo test -- --skip qml_suites_pass
