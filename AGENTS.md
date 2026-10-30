@@ -188,7 +188,9 @@ other workflows:
   `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock`. `act` supports
   local reusable workflows and `actions/cache`, so both jobs run for real;
   note it shares one workspace across jobs, so this validates the YAML and
-  the actions, not the cache round-trip between jobs.
+  the actions, not the cache round-trip between jobs. The release packaging
+  job uploads artifacts, which needs act's local artifact server:
+  `act workflow_dispatch -W .github/workflows/build.yml --artifact-server-path /tmp/act-artifacts`.
 
 `build.yml` — releases only:
 
