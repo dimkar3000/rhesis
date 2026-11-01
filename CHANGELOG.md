@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-11-01
+- windows support
+- ci: match cache path order between build and test
+- ci: lint in the shared build so clippy artifacts are cached
+- docs: note act artifact-server flag for packaging validation
+- test: layered test suite with a shared cached CI build
+
 ## [0.5.1] - 2026-10-28
 - fix: background and autostart switches wait for the Apply button like the other settings
 - fix: enabling autostart also enables and locks background hosting until autostart is turned off
