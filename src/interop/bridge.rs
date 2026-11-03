@@ -60,8 +60,6 @@ pub mod ffi {
 
         fn appSetWindowIcon(app: Pin<&mut QApplication>, path: &QString);
 
-        fn syncBackgroundBehavior();
-
         fn setBackgroundBehavior(enabled: bool);
 
         fn appHideRootWindow();
@@ -71,8 +69,6 @@ pub mod ffi {
         fn appRaiseMainWindow();
 
         fn setupIconTheme();
-
-        fn useIniSettingsFormat();
 
         fn applyLanguage(dir: &QString, preferredLocale: &QString) -> bool;
 
@@ -92,12 +88,35 @@ pub mod ffi {
 
         #[qobject]
         #[qml_element]
+        // The client mirror of the daemon-owned state (Refactor.md §5):
+        // status codes 0-5 are daemon-reported (WorkerStatus::code),
+        // 6 = client-local Disconnected. The settings fields mirror the
+        // wire snapshot (rhesis_protocol::Settings) field-for-field;
+        // `default_port` is the factory hint. Written via the generated
+        // setters from the fan-out (auto change signals), read everywhere.
         #[qproperty(i32, server_status)]
         #[qproperty(QString, server_status_reason)]
+        #[qproperty(bool, embedded)]
+        #[qproperty(i32, port)]
+        #[qproperty(i32, default_port)]
+        #[qproperty(QString, external_address)]
+        #[qproperty(bool, background)]
+        #[qproperty(bool, show_tooltips)]
+        #[qproperty(bool, show_debug_tooltips)]
+        #[qproperty(QString, language)]
+        #[qproperty(QVariant, color_settings)]
         type AsyncMessagingHelper = super::AsyncMessagingHelperRust;
 
+        /// Apply a full settings snapshot (the settings page's Apply).
+        /// Parsed from the camelCase keys the page builds, echoed into the
+        /// mirror immediately, and sent to the daemon as SetSettings.
         #[qinvokable]
-        fn restart(self: Pin<&mut AsyncMessagingHelper>, embedded: bool, address: &QString);
+        fn set_settings(self: Pin<&mut AsyncMessagingHelper>, map: QMap_QString_QVariant);
+
+        /// Quit the daemon (tray "Quit service" / final UI quit without
+        /// background hosting).
+        #[qinvokable]
+        fn quit_service(self: Pin<&mut AsyncMessagingHelper>);
 
         #[qinvokable]
         fn start_server(self: Pin<&mut AsyncMessagingHelper>);
@@ -106,16 +125,7 @@ pub mod ffi {
         fn stop_server(self: Pin<&mut AsyncMessagingHelper>);
 
         #[qinvokable]
-        fn set_server_port(self: Pin<&mut AsyncMessagingHelper>, port: &QString);
-
-        #[qinvokable]
         fn retry_server(self: Pin<&mut AsyncMessagingHelper>);
-
-        /// Toggle tray-hosted background running. Calls into helper.h to keep
-        /// `quitOnLastWindowClosed` in sync with the user's choice: with
-        /// background mode on, hiding the last window must NOT quit the app.
-        #[qinvokable]
-        fn set_background(self: Pin<&mut AsyncMessagingHelper>, enabled: bool);
 
         /// Whether an autostart-at-login entry currently exists.
         #[qinvokable]
@@ -128,10 +138,6 @@ pub mod ffi {
 
         #[qinvokable]
         fn text_area_changed(self: Pin<&mut AsyncMessagingHelper>, text: QString);
-
-        #[qinvokable]
-        fn update_colors(self: Pin<&mut AsyncMessagingHelper>, colors: QMap_QString_QVariant);
-
     }
 
     extern "RustQt" {
@@ -213,44 +219,106 @@ pub mod ffi {
 }
 
 use cxx_qt::{CxxQtType, Threading};
-use cxx_qt_lib::{QString, QVariant};
+use cxx_qt_lib::QString;
 use std::pin::Pin;
 
+use crate::connection::Command;
+use crate::interop::async_messaging_helper::{color_settings_to_variant, variant_to_settings};
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
-use crate::languagetool::service::LanguageToolWorkerEvent;
+use rhesis_protocol::{Settings, DEFAULT_PORT};
 
+/// The Qt-facing glue for the mirror object (its pure-information side —
+/// qproperty fields, snapshot parsing, [`Drop`] — lives in
+/// `async_messaging_helper.rs`, next to the connection-independent logic).
+/// Every method here runs on the Qt GUI thread: the invokables from QML,
+/// and `apply_settings`, which the fan-out queues from the connection
+/// thread.
 impl ffi::AsyncMessagingHelper {
-    fn restart(self: Pin<&mut Self>, embedded: bool, address: &QString) {
-        self.rust_mut().restart(embedded, &address.to_string());
+    /// Apply a daemon snapshot to the mirror. Every qproperty goes through
+    /// its generated setter, so QML's change signals fire; the background
+    /// flag also reaches helper.h in the same step —
+    /// `quitOnLastWindowClosed` must follow the snapshot the daemon
+    /// persisted, not a local preference.
+    pub(crate) fn apply_settings(mut self: Pin<&mut Self>, settings: &Settings) {
+        self.as_mut().set_embedded(settings.embedded);
+        self.as_mut().set_port(settings.port as i32);
+        self.as_mut().set_default_port(DEFAULT_PORT as i32);
+        self.as_mut()
+            .set_external_address(QString::from(settings.external_address.as_str()));
+        self.as_mut().set_background(settings.background);
+        self.as_mut().set_show_tooltips(settings.show_tooltips);
+        self.as_mut()
+            .set_show_debug_tooltips(settings.show_debug_tooltips);
+        self.as_mut()
+            .set_language(QString::from(settings.language.as_str()));
+        self.as_mut()
+            .set_color_settings(color_settings_to_variant(&settings.color_settings));
+
+        let enabled = settings.background;
+        ffi::setBackgroundBehavior(enabled);
+        log::info!(
+            "snapshot applied: embedded={} port={} background={} language={:?}",
+            settings.embedded,
+            settings.port,
+            settings.background,
+            settings.language,
+        );
+    }
+
+    /// Send a settings snapshot to the daemon and reflect it locally right
+    /// away: the echo through the daemon (`Settings` frame) is a no-op
+    /// mirror of what this just wrote, so the page never waits a round
+    /// trip for its own Apply.
+    fn set_settings(mut self: Pin<&mut Self>, map: QMap_QString_QVariant) {
+        let settings = variant_to_settings(&map);
+        log::info!("applying settings snapshot: {settings:?}");
+        self.as_mut().apply_settings(&settings);
+        if let Some(connection) = &self.rust().connection {
+            connection.send(Command::SetSettings(settings));
+        } else {
+            log::warn!("settings snapshot dropped, no connection handle");
+        }
     }
 
     fn start_server(self: Pin<&mut Self>) {
-        self.rust_mut().start_server();
+        log::info!("start_server requested");
+        self.send_command(Command::Start);
     }
 
     fn stop_server(self: Pin<&mut Self>) {
-        self.rust_mut().stop_server();
-    }
-
-    fn set_server_port(self: Pin<&mut Self>, port: &QString) {
-        self.rust_mut().set_server_port(&port.to_string());
+        log::info!("stop_server requested");
+        self.send_command(Command::Stop);
     }
 
     fn retry_server(self: Pin<&mut Self>) {
-        self.rust_mut().retry_server();
+        log::info!("retry_server requested");
+        self.send_command(Command::Retry);
     }
 
-    fn set_background(self: Pin<&mut Self>, enabled: bool) {
-        log::info!("set_background({enabled})");
-        ffi::setBackgroundBehavior(enabled);
+    /// A text edit landed: the debounce lives on the daemon side now, so
+    /// every keystroke just goes onto the channel.
+    fn text_area_changed(self: Pin<&mut Self>, text: QString) {
+        self.send_command(Command::Check(text.to_string()));
     }
 
+    /// Quit the daemon (tray menu / final UI quit): best-effort, fire and
+    /// forget; the connection loop honors it as soon as it observes the
+    /// command, connected or not.
+    fn quit_service(self: Pin<&mut Self>) {
+        log::info!("quit_service requested");
+        self.send_command(Command::Shutdown);
+    }
+
+    /// Whether an autostart-at-login entry currently exists (local OS
+    /// state; not part of the daemon's settings store).
     fn is_autostart(self: Pin<&mut Self>) -> bool {
-        crate::autostart::is_enabled()
+        rhesis_platform::autostart::is_enabled()
     }
 
+    /// Create or remove the autostart entry; returns whether it worked
+    /// (sandbox permission failures surface as `false` here).
     fn set_autostart(self: Pin<&mut Self>, enabled: bool) -> bool {
-        match crate::autostart::set_enabled(enabled) {
+        match rhesis_platform::autostart::set_enabled(enabled) {
             Ok(()) => true,
             Err(message) => {
                 log::error!("set_autostart({enabled}) failed: {message}");
@@ -259,33 +327,12 @@ impl ffi::AsyncMessagingHelper {
         }
     }
 
-    fn text_area_changed(self: Pin<&mut Self>, text: QString) {
-        let event = LanguageToolWorkerEvent::UpdateSuggestions(text);
-        match &self.event_sender {
-            Some(sender) => {
-                if let Err(e) = sender.send(event) {
-                    log::warn!("failed to send text change to the worker: {e:?}");
-                }
-            }
-            None => log::warn!("text change dropped, LanguageTool worker not running"),
-        }
-    }
-
-    fn update_colors(self: Pin<&mut Self>, colors: QMap_QString_QVariant) {
-        let mut pairs = Vec::new();
-        for (k, v) in colors.iter() {
-            if let Some(s) = v.value::<QString>() {
-                pairs.push((k.clone(), s));
-            }
-        }
-        let event = LanguageToolWorkerEvent::UpdateColors(pairs);
-        match &self.event_sender {
-            Some(sender) => {
-                if let Err(e) = sender.send(event) {
-                    log::warn!("failed to send color update to the worker: {e:?}");
-                }
-            }
-            None => log::warn!("color update dropped, LanguageTool worker not running"),
+    /// One enqueue path: a dead loop is already logged by the Connection.
+    fn send_command(self: Pin<&mut Self>, command: Command) {
+        if let Some(connection) = &self.rust().connection {
+            connection.send(command);
+        } else {
+            log::warn!("command dropped, no connection handle");
         }
     }
 }
@@ -312,11 +359,13 @@ impl ffi::CustomHighlighter {
     }
 
     pub fn get_suggestions(self: Pin<&mut Self>, start: i32, length: i32) -> ffi::QList_QVariant {
+        use crate::interop::custom_highlighter::recommendation_to_variant;
+
         self.recommendations
             .iter()
             .filter(|r| r.range.start >= start && r.range.length <= length)
             .take(5)
-            .map(QVariant::from)
+            .map(recommendation_to_variant)
             .collect()
     }
 

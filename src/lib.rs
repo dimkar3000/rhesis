@@ -1,5 +1,4 @@
-pub mod autostart;
+pub mod connection;
+pub mod fake_daemon;
 pub mod interop;
-pub mod languagetool;
-pub mod single_instance;
 pub mod ui_tests;

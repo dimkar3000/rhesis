@@ -127,18 +127,20 @@ jobs:
           # `.cargo/config.toml` is gitignored, so a clean CI checkout has no
           # target-dir override: name it here to match the cached path.
           CARGO_TARGET_DIR: build/target
-        run: cargo test --no-run
+        # Workspace-wide: the member crates carry the LanguageTool and
+        # platform test tiers; only the root package alone would skip them.
+        run: cargo test --workspace --no-run
 
       # Clippy compiles in check mode, which produces metadata artifacts that
       # test code generation cannot reuse. Running it here (rather than in the
       # test job) puts those artifacts in the same cache as the binaries, so
       # later runs only re-check the workspace crate instead of every
       # dependency.
-      - name: Lint
+      - name: Workspace lint
         if: inputs.mode == 'test'
         env:
           CARGO_TARGET_DIR: build/target
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build release artifacts
         if: inputs.mode == 'release'

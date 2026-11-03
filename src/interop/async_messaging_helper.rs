@@ -1,196 +1,256 @@
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread::JoinHandle,
-    time::Duration,
-};
+//! Client-side mirror of the daemon's state (Refactor.md §5).
+//!
+//! The helper no longer owns a LanguageTool worker — the daemon does. This
+//! module holds the mirror object's pure information side: the qproperty
+//! fields, the snapshot parse (`variant_to_settings`, the `[QVariant]`
+//! map the settings page hands over), the color-map conversion and the one
+//! teardown rule (drop = ask the daemon to quit iff background hosting is
+//! off). The invokables that drive the connection live next to the cxx-qt
+//! bridge (bridge.rs); the connection module is the only socket-aware code.
 
-use crossbeam::channel::{Receiver, Sender};
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QMap, QMapPair_QString_QVariant, QString, QVariant};
 
-use crate::languagetool::service::{LanguageToolWorker, LanguageToolWorkerEvent, Message};
+use crate::connection::Connection;
+use rhesis_protocol::{Settings, CLIENT_STATUS_DISCONNECTED, DEFAULT_PORT};
 
+/// The mirror object behind QML's `messagingHelper`. Field set = the
+/// `#[qproperty]` declarations in bridge.rs plus the connection handle.
 pub struct AsyncMessagingHelperRust {
-    /// Clone of the worker's event channel, used to send UI events to it
-    pub event_sender: Option<Sender<LanguageToolWorkerEvent>>,
-    /// Clone of the worker's message channel, used to receive results from it.
-    /// Sole owner is the dispatcher thread (see `CustomHighlighterRust`);
-    /// do not clone it elsewhere to avoid stealing messages.
-    pub message_receiver: Option<Receiver<Message>>,
+    /// What invokedables enqueue onto; `None` while dead (a dead loop is
+    /// logged by [`Connection::send`], the UI just stays stale).
+    pub connection: Option<Connection>,
 
-    /// True while the LanguageTool worker thread is alive
-    pub worker_running: Arc<AtomicBool>,
-    pub worker_thread: Option<JoinHandle<()>>,
-
-    // Mirrors `WorkerStatus` for QML (`qproperty` in bridge.rs).
-    // Status codes: 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
-    // 4 = Connecting, 5 = FailedToRespond.
+    // Mirrors of the daemon-reported status. Between sessions the UI shows
+    // the client-legal "Disconnected" (code 6); the daemon replay follows.
     pub server_status: i32,
     pub server_status_reason: QString,
+
+    // Snapshot mirrors; written wherever Qt-thread code applies a snapshot
+    // (`apply_settings` in bridge.rs, via the generated setters).
+    pub embedded: bool,
+    pub port: i32,
+    pub default_port: i32,
+    pub external_address: QString,
+    pub background: bool,
+    pub show_tooltips: bool,
+    pub show_debug_tooltips: bool,
+    pub language: QString,
+    pub color_settings: QVariant,
 }
 
 impl Default for AsyncMessagingHelperRust {
+    /// Boot-defensive defaults: no session yet (Disconnected), the same
+    /// snapshot the daemon would store fresh (`Settings::default`), and the
+    /// factory port duplicated in `default_port` for the UI hint.
     fn default() -> Self {
+        let defaults = Settings::default();
         Self {
-            event_sender: None,
-            message_receiver: None,
-            worker_running: Arc::new(AtomicBool::new(false)),
-            worker_thread: None,
-            server_status: 0, // Stopped
+            connection: None,
+            server_status: CLIENT_STATUS_DISCONNECTED,
             server_status_reason: QString::default(),
+            embedded: defaults.embedded,
+            port: defaults.port as i32,
+            default_port: DEFAULT_PORT as i32,
+            external_address: QString::from(defaults.external_address.as_str()),
+            background: defaults.background,
+            show_tooltips: defaults.show_tooltips,
+            show_debug_tooltips: defaults.show_debug_tooltips,
+            language: QString::from(defaults.language.as_str()),
+            color_settings: color_settings_to_variant(&defaults.color_settings),
         }
     }
 }
 
 impl Drop for AsyncMessagingHelperRust {
+    /// The UI is the daemon's reference counter when background hosting is
+    /// off: whoever quits last kills the daemon. With background on the
+    /// daemon keeps serving (idle grace skipped), so no shutdown here.
     fn drop(&mut self) {
-        if self.worker_running.swap(false, Ordering::SeqCst) {
-            if let Some(sender) = &self.event_sender {
-                log::info!("Sending Kill to LanguageTool worker");
-                if let Err(e) = sender.send(LanguageToolWorkerEvent::Kill) {
-                    log::warn!("failed to send Kill to LanguageTool worker: {e:?}");
-                }
-            }
+        if self.background {
+            return;
         }
-
-        if let Some(thread) = self.worker_thread.take() {
-            if let Err(e) = thread.join() {
-                log::warn!("LanguageTool worker thread panicked during shutdown: {e:?}");
-            }
+        if let Some(connection) = &self.connection {
+            log::info!("UI is quitting without background hosting; asking the daemon to quit");
+            connection.send(crate::connection::Command::Shutdown);
         }
     }
 }
 
-impl AsyncMessagingHelperRust {
-    /// Make sure the LanguageTool worker is running, starting it in a
-    /// standalone thread if it isn't. The worker boots in `Stopped`.
-    pub fn ensure_worker_running(&mut self) {
-        if self.worker_running.load(Ordering::SeqCst) {
-            return;
+/// Build the QVariant map the QML mirror property holds
+/// (`helper.color_settings`, `"CATEGORY:GRAMMAR"` → `"#ecc224"`).
+pub(crate) fn color_settings_to_variant(
+    colors: &std::collections::BTreeMap<String, String>,
+) -> QVariant {
+    let mut map = QMap::<QMapPair_QString_QVariant>::default();
+    for (key, value) in colors {
+        map.insert(QString::from(key), QVariant::from(&QString::from(value)));
+    }
+    QVariant::from(&map)
+}
+
+/// Parse the settings snapshot a QML page hands over (`set_settings`).
+/// Missing keys fall back to [`Settings::default`], so a partial map can
+/// never amputate the daemon's snapshot; the keys are the store's
+/// camelCase names (Refactor.md §6), the same names SettingsPage builds.
+pub(crate) fn variant_to_settings(map: &QMap<QMapPair_QString_QVariant>) -> Settings {
+    let mut settings = Settings::default();
+
+    let get_bool = |key: &str| {
+        map.get(&QString::from(key))
+            .and_then(|value| value.value::<bool>())
+    };
+    let get_string = |key: &str| {
+        map.get(&QString::from(key))
+            .and_then(|value| value.value::<QString>())
+            .map(|value| value.to_string())
+    };
+
+    if let Some(embedded) = get_bool("embedded") {
+        settings.embedded = embedded;
+    }
+
+    // The port always crosses as a string (the page's text field), so no
+    // QVariant number guessing happens here; junk keeps the fallback.
+    if let Some(text) = get_string("port") {
+        match text.trim().parse::<u16>() {
+            Ok(port) => settings.port = port,
+            Err(_) => log::warn!("invalid port {text:?}, keeping {}", settings.port),
         }
+    }
 
-        if let Some(thread) = self.worker_thread.take() {
-            // The previous worker died; make sure its thread finished.
-            log::debug!("joining previous LanguageTool worker thread");
-            let _ = thread.join();
-        }
+    if let Some(address) = get_string("externalAddress") {
+        settings.external_address = address.trim().to_string();
+    }
+    if let Some(background) = get_bool("background") {
+        settings.background = background;
+    }
+    if let Some(tooltips) = get_bool("showTooltips") {
+        settings.show_tooltips = tooltips;
+    }
+    if let Some(debug) = get_bool("showDebugTooltips") {
+        settings.show_debug_tooltips = debug;
+    }
+    if let Some(language) = get_string("language") {
+        settings.language = language;
+    }
 
-        log::info!("Starting LanguageTool worker thread");
-
-        // Thread spawn can fail transiently under resource pressure, so retry
-        // a few times with a short pause in between. Without the worker there
-        // is no grammar checking at all, so an exhausted budget aborts loudly.
-        const SPAWN_ATTEMPTS: u32 = 3;
-        const SPAWN_RETRY_DELAY: Duration = Duration::from_millis(200);
-        let mut attempt = 0;
-        let handles = loop {
-            attempt += 1;
-            match LanguageToolWorker::default().start() {
-                Some(handles) => break handles,
-                None if attempt < SPAWN_ATTEMPTS => {
-                    log::warn!(
-                        "worker thread spawn attempt {attempt}/{SPAWN_ATTEMPTS} failed, \
-                         retrying in {SPAWN_RETRY_DELAY:?}"
-                    );
-                    std::thread::sleep(SPAWN_RETRY_DELAY);
-                }
-                None => {
-                    log::error!(
-                        "failed to spawn LanguageTool worker thread \
-                         after {SPAWN_ATTEMPTS} attempts"
-                    );
-                    panic!(
-                        "failed to spawn LanguageTool worker thread \
-                         after {SPAWN_ATTEMPTS} attempts"
-                    );
-                }
+    if let Some(colors) = map
+        .get(&QString::from("colorSettings"))
+        .and_then(|value| value.value::<QMap<QMapPair_QString_QVariant>>())
+    {
+        for (key, value) in colors.iter() {
+            if let Some(color) = value.value::<QString>() {
+                settings
+                    .color_settings
+                    .insert(key.to_string(), color.to_string());
             }
+        }
+    }
+
+    settings
+}
+
+// ---------------------------------------------------------------------------
+// In-module tests: pure data plumbing only (map parse + mirror defaults).
+// The Qt-thread glue (generated setters, setBackgroundBehavior) is not
+// unit-testable here and lives in the E2E tiers.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map_from(pairs: &[(&str, QVariant)]) -> QMap<QMapPair_QString_QVariant> {
+        let mut map = QMap::<QMapPair_QString_QVariant>::default();
+        for (key, value) in pairs {
+            map.insert(QString::from(*key), value.clone());
+        }
+        map
+    }
+
+    #[test]
+    fn defaults_match_the_protocol_snapshot() {
+        let helper = AsyncMessagingHelperRust::default();
+        let defaults = Settings::default();
+        assert_eq!(helper.server_status, CLIENT_STATUS_DISCONNECTED);
+        assert_eq!(helper.server_status_reason.to_string(), "");
+        assert_eq!(helper.embedded, defaults.embedded);
+        assert_eq!(helper.port, defaults.port as i32);
+        assert_eq!(helper.default_port, DEFAULT_PORT as i32);
+        assert_eq!(helper.external_address.to_string(), "");
+        assert!(!helper.background);
+        assert!(helper.show_tooltips);
+        assert!(helper.show_debug_tooltips);
+        assert_eq!(helper.language.to_string(), "");
+        assert!(helper.connection.is_none());
+    }
+
+    #[test]
+    fn a_missing_map_falls_back_to_full_defaults() {
+        let empty = map_from(&[]);
+        let settings = variant_to_settings(&empty);
+        assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn every_store_key_is_parsed() {
+        let colors = {
+            let mut map = QMap::<QMapPair_QString_QVariant>::default();
+            map.insert(
+                QString::from("CATEGORY:TYPOS"),
+                QVariant::from(&QString::from("#1ae918")),
+            );
+            map.insert(
+                QString::from("RULE:MY_RULE"),
+                QVariant::from(&QString::from("#abcdef")),
+            );
+            QVariant::from(&map)
         };
+        let snapshot = map_from(&[
+            ("embedded", QVariant::from(&false)),
+            ("port", QVariant::from(&QString::from("2790"))),
+            (
+                "externalAddress",
+                QVariant::from(&QString::from(" http://127.0.0.1:8081/v2 ")),
+            ),
+            ("background", QVariant::from(&true)),
+            ("showTooltips", QVariant::from(&false)),
+            ("showDebugTooltips", QVariant::from(&false)),
+            ("language", QVariant::from(&QString::from("el_GR"))),
+            ("colorSettings", colors),
+        ]);
 
-        self.event_sender = Some(handles.event_sender);
-        self.message_receiver = Some(handles.message_receiver);
-        self.worker_running = handles.running;
-        self.worker_thread = Some(handles.thread);
+        let settings = variant_to_settings(&snapshot);
+        assert!(!settings.embedded);
+        assert_eq!(settings.port, 2790);
+        assert_eq!(settings.external_address, "http://127.0.0.1:8081/v2");
+        assert!(settings.background);
+        assert!(!settings.show_tooltips);
+        assert!(!settings.show_debug_tooltips);
+        assert_eq!(settings.language, "el_GR");
+        assert_eq!(
+            settings
+                .color_settings
+                .get("RULE:MY_RULE")
+                .map(String::as_str),
+            Some("#abcdef")
+        );
+        // Untouched entry from the defaults base survives the merge.
+        assert_eq!(
+            settings
+                .color_settings
+                .get("CATEGORY:GRAMMAR")
+                .map(String::as_str),
+            Some("#ecc224")
+        );
     }
 
-    fn send(&self, event: LanguageToolWorkerEvent) {
-        match &self.event_sender {
-            Some(sender) => {
-                if let Err(e) = sender.send(event) {
-                    log::warn!("failed to send event to the worker: {e:?}");
-                }
-            }
-            None => log::warn!("event dropped, LanguageTool worker not running"),
-        }
-    }
+    #[test]
+    fn an_integer_port_in_a_string_still_works_and_junk_is_kept_out() {
+        let text_port = map_from(&[("port", QVariant::from(&QString::from("3012")))]);
+        assert_eq!(variant_to_settings(&text_port).port, 3012);
 
-    pub fn start_server(&mut self) {
-        self.ensure_worker_running();
-        log::info!("start_server requested");
-        self.send(LanguageToolWorkerEvent::Start);
-    }
-
-    pub fn stop_server(&mut self) {
-        self.ensure_worker_running();
-        log::info!("stop_server requested");
-        self.send(LanguageToolWorkerEvent::Stop);
-    }
-
-    pub fn set_server_port(&mut self, port: &str) {
-        self.ensure_worker_running();
-        match port.parse::<u16>() {
-            Ok(p) => {
-                log::info!("set_server_port {p}");
-                self.send(LanguageToolWorkerEvent::SetPort(p));
-            }
-            Err(_) => log::warn!("invalid port {port:?}, ignoring"),
-        }
-    }
-
-    pub fn retry_server(&mut self) {
-        self.ensure_worker_running();
-        log::info!("retry_server requested");
-        self.send(LanguageToolWorkerEvent::Retry);
-    }
-
-    /// Reconfigure which LanguageTool server the worker talks to.
-    ///
-    /// `embedded` selects the built-in local server; `address` is then the
-    /// port to spawn it on. Otherwise `address` is the base URL of an
-    /// external LanguageTool instance to connect to instead (an empty
-    /// address just stops the current server).
-    pub fn restart(&mut self, embedded: bool, address: &str) {
-        log::info!("restart called, embedded={embedded}, address={address}");
-
-        self.ensure_worker_running();
-
-        let sender = match &self.event_sender {
-            Some(sender) => sender,
-            None => {
-                log::error!("LanguageTool worker has no event sender");
-                return;
-            }
-        };
-
-        let address = address.trim();
-        let event = if embedded {
-            match address.parse() {
-                Ok(port) => LanguageToolWorkerEvent::RestartLocalServer(port),
-                Err(_) => {
-                    log::warn!("invalid port {address:?} in restart, falling back to 2689");
-                    LanguageToolWorkerEvent::RestartLocalServer(2689)
-                }
-            }
-        } else if address.is_empty() {
-            // No external address configured: leave no server running.
-            LanguageToolWorkerEvent::Stop
-        } else {
-            LanguageToolWorkerEvent::SwitchToRemoteServer(address.to_string())
-        };
-        if let Err(e) = sender.send(event) {
-            log::warn!("failed to send restart event to the worker: {e:?}");
-        }
+        let junk = map_from(&[("port", QVariant::from(&QString::from("not-a-port")))]);
+        assert_eq!(variant_to_settings(&junk).port, Settings::default().port);
     }
 }

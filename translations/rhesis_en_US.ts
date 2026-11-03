@@ -40,6 +40,10 @@
         <translation>Grammar: Failed to respond</translation>
     </message>
     <message>
+        <source>lt_disconnected</source>
+        <translation>Grammar: Disconnected</translation>
+    </message>
+    <message>
         <source>lt_stopped</source>
         <translation>Grammar: Off</translation>
     </message>
@@ -65,6 +69,10 @@
     <message>
         <source>tray_stop_server</source>
         <translation>Stop server</translation>
+    </message>
+    <message>
+        <source>tray_quit_service</source>
+        <translation>Quit service</translation>
     </message>
     <message>
         <source>tray_quit</source>
@@ -127,6 +135,10 @@
     <message>
         <source>lt_failed</source>
         <translation>Grammar: Failed</translation>
+    </message>
+    <message>
+        <source>lt_disconnected</source>
+        <translation>Grammar: Disconnected</translation>
     </message>
     <message>
         <source>lt_stopped</source>

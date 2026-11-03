@@ -1,0 +1,31 @@
+[package]
+name = "rhesis-service"
+description = "Headless Rhesis daemon: owns the LanguageTool server and all settings, serves one UI client over a local socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+crossbeam.workspace = true
+log.workspace = true
+env_logger = "0.11.11"
+# Local-socket transport (Refactor.md §5): abstract UDS on Linux, named pipe
+# on Windows, behind the schema's SERVICE_SOCKET_NAME.
+interprocess = "2"
+
+rhesis-protocol = { path = "../rhesis-protocol" }
+rhesis-settings = { path = "../rhesis-settings" }
+rhesis-languagetool = { path = "../rhesis-languagetool" }
+rhesis-platform = { path = "../rhesis-platform" }
+
+[dev-dependencies]
+# The daemon-session tier reads the owned store file directly for its
+# persistence assertions.
+serde_json = "1.0"
+
+# Test targets are declared explicitly: the files live in tests/unit/ rather
+# than directly in tests/, so cargo cannot auto-discover them. A new test
+# file needs its [[test]] entry or it never runs.
+[[test]]
+name = "daemon-session"
+path = "tests/unit/daemon_session.rs"

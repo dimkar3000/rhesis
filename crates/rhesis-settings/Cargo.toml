@@ -1,0 +1,20 @@
+[package]
+name = "rhesis-settings"
+description = "Versioned JSON settings store for the Rhesis daemon: defaults, atomic writes, INI migration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rhesis-protocol = { path = "../rhesis-protocol" }
+rhesis-platform = { path = "../rhesis-platform" }
+
+# Test targets are declared explicitly: the files live in tests/unit/ (the
+# fixture directory tests/fixtures/ holds no Rust), so cargo cannot
+# auto-discover them. A new test file needs its [[test]] entry or it never runs.
+[[test]]
+name = "settings-store"
+path = "tests/unit/settings_store.rs"

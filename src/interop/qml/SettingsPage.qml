@@ -10,7 +10,6 @@ Kirigami.Page {
 
     title: qsTr("settings_title")
 
-    property var settings
     property AsyncMessagingHelper helper
     property LanguageManager langManager
     property bool localEmbedded: false
@@ -29,26 +28,27 @@ Kirigami.Page {
     property string localPort: ""
     property string localAddress: ""
     property string localLanguage: ""
-    // The configuration of the selected server type, old vs. new.
+    // The configuration of the selected server type, old vs. new. The
+    // mirror's port is a number while the draft lives in a text field, so
+    // the comparison parses the draft (NaN never equals anything).
     property bool serverConfigChanged: {
-        var saved = localEmbedded ? settings.port : settings.externalAddress;
-        var current = localEmbedded ? localPort : localAddress;
+        var saved = localEmbedded ? helper.port : helper.external_address;
+        var current = localEmbedded ? parseInt(localPort) : localAddress;
         return current !== saved;
     }
-    property bool shouldRestartServer: localEmbedded !== settings.embedded || serverConfigChanged
 
     ListModel {
         id: colorRulesModel
     }
 
     Component.onCompleted: {
-        localEmbedded = settings.embedded;
-        localPort = settings.port;
-        localAddress = settings.externalAddress;
-        localBackgroundSwitch = settings.background;
-        localTooltipSwitch = settings.showTooltips;
-        localDebugTooltipSwitch = settings.showDebugTooltips;
-        localLanguage = settings.language;
+        localEmbedded = helper.embedded;
+        localPort = String(helper.port);
+        localAddress = helper.external_address;
+        localBackgroundSwitch = helper.background;
+        localTooltipSwitch = helper.show_tooltips;
+        localDebugTooltipSwitch = helper.show_debug_tooltips;
+        localLanguage = helper.language;
         // The autostart switch must show the real state on open: its draft
         // property starts false, so without this the toggle reads "not set"
         // even when an autostart entry exists.
@@ -82,7 +82,7 @@ Kirigami.Page {
 
     function loadColorRules() {
         colorRulesModel.clear();
-        var map = settings.colorSettings;
+        var map = helper.color_settings;
         var keys = Object.keys(map);
         if (keys && keys.length) {
             for (var i = 0; i < keys.length; i++) {
@@ -157,7 +157,7 @@ Kirigami.Page {
         }
 
         // Server type is changed
-        if (localEmbedded !== settings.embedded) {
+        if (localEmbedded !== helper.embedded) {
             if (localEmbedded && isValidLocalPort(localPort)) {
                 return true;
             }
@@ -168,11 +168,11 @@ Kirigami.Page {
             return false;
         }
 
-        if (localEmbedded && localPort !== settings.port && isValidLocalPort(localPort)) {
+        if (localEmbedded && parseInt(localPort) !== helper.port && isValidLocalPort(localPort)) {
             return true;
         }
 
-        if (!localEmbedded && localAddress !== settings.externalAddress
+        if (!localEmbedded && localAddress !== helper.external_address
                 && isValidExternalAddress(localAddress)) {
             return true;
         }
@@ -181,20 +181,20 @@ Kirigami.Page {
         // everything else on this page: their draft (and, for autostart, the
         // state read from the entry files on open) differs while a change
         // waits for the Apply button to commit it.
-        if (localBackgroundSwitch !== settings.background
+        if (localBackgroundSwitch !== helper.background
                 || localAutostartSwitch !== savedAutostart) {
             return true;
         }
 
-        if (localTooltipSwitch !== settings.showTooltips) {
+        if (localTooltipSwitch !== helper.show_tooltips) {
             return true;
         }
 
-        if (localDebugTooltipSwitch !== settings.showDebugTooltips) {
+        if (localDebugTooltipSwitch !== helper.show_debug_tooltips) {
             return true;
         }
 
-        if (localLanguage !== settings.language) {
+        if (localLanguage !== helper.language) {
             return true;
         }
 
@@ -207,7 +207,7 @@ Kirigami.Page {
 
     function colorRulesChanged() {
         let current = collectColorRules();
-        let saved = settings.colorSettings;
+        let saved = helper.color_settings;
 
         let currentKeys = Object.keys(current);
         let savedKeys = saved ? Object.keys(saved).filter(k => k.startsWith("CATEGORY:") || k.startsWith("RULE:")) : [];
@@ -231,24 +231,16 @@ Kirigami.Page {
             text: qsTr("apply_action")
             enabled: isFormSubmitable()
             onTriggered: {
-                if (shouldRestartServer) {
-                    helper.restart(localEmbedded, localEmbedded ? localPort : localAddress);
-                }
-
-                settings.embedded = localEmbedded;
-                settings.port = localPort;
-                settings.externalAddress = localAddress;
-
-                // Background hosting follows the draft; the runtime behavior
-                // mirrors the previously instant path. Hidden-in-tray
-                // sessions must never be stranded: when the tray icon is
-                // about to disappear, bring the window back so the app stays
-                // visible and closable. A hidden launch keeps its tray icon
-                // regardless.
-                settings.background = localBackgroundSwitch;
-                helper.set_background(settings.background);
-                if (!(settings.background && settings.embedded) && !applicationWindow().hiddenLaunch) {
-                    applicationWindow().visible = true;
+                // The language switch goes first: a failed attempt keeps the
+                // effective old code, and the snapshot below must carry what
+                // actually took effect — the daemon stores the language too.
+                if (localLanguage !== helper.language) {
+                    if (langManager.apply_language(localLanguage)) {
+                        // Retranslated; the snapshot persists the new code.
+                    } else {
+                        console.warn(`failed to switch language to "${localLanguage}", keeping "${helper.language}"`);
+                        localLanguage = helper.language;
+                    }
                 }
 
                 // The autostart draft only reaches the entry files here; on
@@ -267,21 +259,34 @@ Kirigami.Page {
                     }
                 }
 
-                settings.showTooltips = localTooltipSwitch;
+                // Full snapshot: the daemon owns every setting now. It
+                // persists, mirrors back, and reconciles the server (a new
+                // port or an external address drives the same restart the
+                // old `restart()` call did — nothing more to do here).
+                const snapshot = {
+                    embedded: localEmbedded,
+                    port: localPort,
+                    externalAddress: localAddress,
+                    background: localBackgroundSwitch,
+                    showTooltips: localTooltipSwitch,
+                    showDebugTooltips: localTooltipSwitch && localDebugTooltipSwitch,
+                    language: localLanguage,
+                    colorSettings: collectColorRules(),
+                };
 
-                settings.showDebugTooltips = localDebugTooltipSwitch && localTooltipSwitch;
-
-                if (localLanguage !== settings.language) {
-                    if (langManager.apply_language(localLanguage)) {
-                        settings.language = localLanguage;
-                    } else {
-                        console.warn(`failed to switch language to "${localLanguage}", keeping "${settings.language}"`);
-                        localLanguage = settings.language;
-                    }
+                // Background hosting applies eagerly: the snapshot lands on
+                // the helper right below (which also re-asserts the Qt-side
+                // quit behavior). Hidden-in-tray sessions must never be
+                // stranded, so when the tray icon is about to disappear,
+                // bring the window back before the behavior lands. A hidden
+                // launch keeps its tray icon regardless.
+                if (!(snapshot.background && snapshot.embedded) && !applicationWindow().hiddenLaunch) {
+                    applicationWindow().visible = true;
                 }
 
-                settings.colorSettings = collectColorRules();
-                helper.update_colors(settings.colorSettings);
+                // Round trip: mirrors the snapshot locally (the page reads
+                // it back) and hands it to the daemon as the single write.
+                helper.set_settings(snapshot);
 
                 applicationWindow().pageStack.layers.pop();
             }
@@ -395,8 +400,8 @@ Kirigami.Page {
                 Controls.Button {
                     id: resetBtn
                     icon.name: "document-revert"
-                    enabled: localPort !== settings.defaultPort
-                    onClicked: localPort = settings.defaultPort
+                    enabled: localPort !== String(helper.default_port)
+                    onClicked: localPort = String(helper.default_port)
                     Controls.ToolTip {
                         text: qsTr("reset_port_tooltip")
                         visible: parent.hovered
@@ -478,7 +483,7 @@ Kirigami.Page {
                     if (!pageInitDone) {
                         return;
                     }
-                    // Draft only: settings.background and the host behavior
+                    // Draft only: the daemon snapshot and the host behavior
                     // are committed by Apply (see the Apply action).
                     localBackgroundSwitch = checked;
                 }

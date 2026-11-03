@@ -9,8 +9,11 @@ use lazy_static::lazy_static;
 
 use std::env;
 
+use rhesis::connection;
 use rhesis::interop::bridge;
-use rhesis::interop::language::{find_translations_dir, persisted_language};
+use rhesis_platform::autostart;
+use rhesis_platform::resources::translations_dir;
+use rhesis_platform::single_instance;
 
 // Windows has its own Kirigami-free QML (see build.rs).
 #[cfg(windows)]
@@ -33,8 +36,7 @@ lazy_static! {
     static ref LOGO_PATH: QString = QString::from(":/icons/hicolor/256x256/apps/logo.png");
 }
 
-#[tokio::main()]
-async fn main() {
+fn main() {
     run_ui();
 }
 
@@ -49,22 +51,43 @@ fn run_ui() {
         Pin::as_mut(&mut app).set_application_name(&QString::from("Rhesis"));
     }
 
-    #[cfg(windows)]
-    bridge::ffi::useIniSettingsFormat();
-
-    // Apply the persisted "keep running in the background" preference before
-    // anything creates windows: with it enabled, hiding the last window must
-    // not quit the whole app (the LanguageTool server stays up for other apps).
-    log::debug!("syncing background behavior from the persisted settings");
-    bridge::ffi::syncBackgroundBehavior();
-
     // Single-instance guard: a second launch asks the running app to show
     // its window and exits without creating any UI of its own. Deliberately
     // runs before QApplication exists, so a secondary instance is cheap.
-    if !rhesis::single_instance::acquire() {
+    if !single_instance::acquire() {
         log::info!("another Rhesis instance is running; asked it to show its window");
         return;
     }
+
+    // Refactor.md §5 boot re-order: every setting lives in the daemon now.
+    // Reach one — spawning the same-install daemon when nothing is listening
+    // — and read its persisted snapshot BEFORE Qt builds anything: the
+    // background behavior and the language override shape this process, and
+    // the single-client slot (§3) makes the probe strictly sequential (the
+    // steady-state connection starts later, from QML's startMessageThread).
+    // No snapshot within the budget → boot on defaults; the connection loop
+    // replays as soon as a session comes up and the mirror corrects itself.
+    let snapshot = connection::boot_snapshot();
+    let (background, preferred_language) = match &snapshot {
+        Some(snapshot) => {
+            log::info!(
+                "boot snapshot: language={:?} background={}",
+                snapshot.language,
+                snapshot.background
+            );
+            (snapshot.background, snapshot.language.clone())
+        }
+        None => (
+            rhesis_protocol::Settings::default().background,
+            String::new(),
+        ),
+    };
+
+    // Apply the daemon's "keep running in the background" preference before
+    // anything creates windows: with it enabled, hiding the last window must
+    // not quit the whole app (the LanguageTool server stays up for other
+    // apps). Every later snapshot mirror re-asserts it (apply_settings).
+    bridge::ffi::setBackgroundBehavior(background);
 
     // A relocated AppImage (moved, renamed for a version bump, re-homed by
     // Gear Lever…) left the autostart entry pointing at the old path, so the
@@ -77,20 +100,19 @@ fn run_ui() {
     // before any of our code runs — so the first launch after moving the
     // file must be a manual one (toggling autostart on off→on would also
     // rewrite it, but the heal makes that unnecessary).
-    rhesis::autostart::self_heal();
+    autostart::self_heal();
 
     bridge::ffi::setupIconTheme();
 
-    let translations_dir = find_translations_dir();
+    let translations_dir = translations_dir();
     log::info!("using translations directory: {:?}", translations_dir);
 
     if let Some(dir) = translations_dir {
         let dir = dir.to_string_lossy().to_string();
-        let preferred = persisted_language();
-        if !preferred.is_empty() {
-            log::info!("using persisted language override: {preferred}");
+        if !preferred_language.is_empty() {
+            log::info!("using persisted language override: {preferred_language}");
         }
-        if !bridge::ffi::applyLanguage(&QString::from(&dir), &QString::from(&preferred)) {
+        if !bridge::ffi::applyLanguage(&QString::from(&dir), &QString::from(&preferred_language)) {
             log::warn!("failed to install translations from {dir}");
         }
     }

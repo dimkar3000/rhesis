@@ -4,8 +4,10 @@
 //! The goal is the same hermeticity the QuickTest runner applies inside the
 //! library (`src/ui_tests.rs :: isolate_environment`, the reference copy):
 //! all writable XDG homes are redirected into a per-tier sandbox under
-//! `build/ui-tests/`, so tests never touch a real user configuration and the
-//! fake completion provider answers before anything could spawn a worker.
+//! `build/ui-tests/`, so tests never touch a real user configuration. The
+//! daemon seam (`RHESIS_SERVICE_SOCKET`) plus the in-process fake daemon
+//! (`src/fake_daemon.rs`) keep every conversation off the network and off
+//! any real LanguageTool installation.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

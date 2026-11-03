@@ -7,7 +7,6 @@ Controls.Page {
     id: mainPage
     padding: 0
 
-    property var settings
     property int wordStart: 0
     property int wordEnd: 0
     property CustomHighlighter highlighter
@@ -65,7 +64,7 @@ Controls.Page {
                 text: suggestion
                 Controls.ToolTip {
                     text: tooltip
-                    visible: parent.hovered && settings.showTooltips
+                    visible: parent.hovered && helper.show_tooltips
                     delay: 500
                     timeout: 2500
                     x: parent.width + 10
@@ -85,7 +84,7 @@ Controls.Page {
                 let suggestion = suggestions[i].value;
 
                 let tooltip = suggestions[i].tooltip;
-                if (settings.showDebugTooltips) {
+                if (helper.show_debug_tooltips) {
                     // Imperative: refreshes on every rebuild (each keystroke),
                     // so a language switch applies here without extra handling.
                     tooltip = `[${suggestions[i].language}] ${suggestions[i].tooltip}\n\n${qsTr("more_info_tooltip")} ${qsTr("rule_id_label")} ${suggestions[i].rule_id}\n${qsTr("category_id_label")} ${suggestions[i].category_id}`;

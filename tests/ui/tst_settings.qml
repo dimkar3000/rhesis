@@ -1,19 +1,18 @@
 // Page-level suite for the settings flow: the draft contract (edits wait
 // for Apply), the autostart⇄background pairing lock, and the color-rule
-// rows feeding the committed colorSettings.
+// rows feeding the committed snapshot.
 //
-// The helper is intentionally left unstarted (no restart → no worker churn):
-// only the autostart and background helpers are exercised here.
+// The helper runs here as a pure local mirror (no connection): Apply's
+// snapshot applies synchronously to the helper qproperties, which stand in
+// for what the daemon's store would persist.
 //
-// The runner sandboxed every XDG home, so the store and the autostart
-// desktop entry that Apply commits live in the harness's own config root.
-// Interactions go through the user path — click() for switches and buttons —
-// because direct property writes do not run the page's toggled/clicked
-// handlers, and toggle() does not emit toggled for bound switches either.
-// Quick Test loads this file into a
-// QQuickView, so the root stays a plain item (TestCase) and the app shell
-// lives below it as a nested window.
-import QtCore
+// The runner sandboxed every XDG home, so the autostart desktop entry that
+// Apply commits lives in the harness's own config root. Interactions go
+// through the user path — click() for switches and buttons — because
+// direct property writes do not run the page's toggled/clicked handlers,
+// and toggle() does not emit toggled for bound switches either. Quick Test
+// loads this file into a QQuickView, so the root stays a plain item
+// (TestCase) and the app shell lives below it as a nested window.
 import QtQuick
 import QtTest
 import org.kde.kirigami as Kirigami
@@ -32,13 +31,6 @@ TestCase {
         return appShell;
     }
 
-    // QtCore Settings wants an application identity the harness process does
-    // not have — pointing the store at an explicit file via the documented
-    // `location` property makes that lookup unnecessary.
-    readonly property string settingsFile:
-        StandardPaths.writableLocation(StandardPaths.GenericConfigLocation)
-            + "/rhesis-ui-tests-settings.conf"
-
     Kirigami.ApplicationWindow {
         id: appShell
 
@@ -51,32 +43,13 @@ TestCase {
         // no-op.
         readonly property bool hiddenLaunch: false
 
-        // The same store shape as Root.qml. The file is truncated with the
-        // sandbox each run, so the first read returns these defaults.
-        Settings {
-            id: appSettings
-            location: settingsFile
-            property bool embedded: true
-            property string port: "2689"
-            property string defaultPort: "2689"
-            property string externalAddress: ""
-            property bool background: false
-            property bool showTooltips: true
-            property bool showDebugTooltips: true
-            property string language: ""
-            property var colorSettings: ({
-                    "CATEGORY:GRAMMAR": "#ecc224",
-                    "CATEGORY:TYPOGRAPHY": "#f63ef9",
-                    "CATEGORY:TYPOS": "#1ae918"
-                })
-        }
-
         LanguageManager {
             id: languageManager
         }
 
-        // No Component.onCompleted: the suite never (re)starts the fake
-        // worker; only the autostart and background helpers get exercised.
+        // No connection: this suite never talks to a daemon. The helper's
+        // qproperties are its state; set_settings mirrors a snapshot into
+        // them synchronously.
         AsyncMessagingHelper {
             id: messagingHelper
         }
@@ -101,11 +74,30 @@ TestCase {
         Component {
             id: settingsPageComponent
             SettingsPage {
-                settings: appSettings
                 helper: messagingHelper
                 langManager: languageManager
             }
         }
+    }
+
+    // The default snapshot AS THE QML PAGE BUILDS IT (camelCase keys, port
+    // as a string) — exactly what set_settings parses, so a reset through
+    // this path exercises the same code the production Apply runs.
+    function defaultSnapshot() {
+        return {
+            embedded: true,
+            port: "2689",
+            externalAddress: "",
+            background: false,
+            showTooltips: true,
+            showDebugTooltips: true,
+            language: "",
+            colorSettings: ({
+                    "CATEGORY:GRAMMAR": "#ecc224",
+                    "CATEGORY:TYPOGRAPHY": "#f63ef9",
+                    "CATEGORY:TYPOS": "#1ae918"
+                })
+        };
     }
 
     function initTestCase() {
@@ -115,20 +107,13 @@ TestCase {
 
     // QuickTest runs the functions alphabetically, not in file order, so
     // every entry point resets the state an earlier function could have
-    // persisted: remove the autostart entry and write the store's defaults
-    // back. Factories for page state still seed what they need explicitly
-    // (see the removal test).
+    // persisted: remove the autostart entry and mirror the default snapshot
+    // back onto the helper. Factories for page state still seed what they
+    // need explicitly (see the removal test).
     function init() {
         if (messagingHelper.is_autostart())
             messagingHelper.set_autostart(false);
-        appSettings.background = false;
-        appSettings.showTooltips = true;
-        appSettings.showDebugTooltips = true;
-        appSettings.colorSettings = {
-            "CATEGORY:GRAMMAR": "#ecc224",
-            "CATEGORY:TYPOGRAPHY": "#f63ef9",
-            "CATEGORY:TYPOS": "#1ae918"
-        };
+        messagingHelper.set_settings(defaultSnapshot());
     }
 
     // Pages are pushed as layers so they resolve `applicationWindow()` and
@@ -170,8 +155,8 @@ TestCase {
                 (ok) => Harness.capture(this, ok, appShell));
         compare(page.actions.length, 1, "one action lives on the page");
         verify(!applyAction(page).enabled, "nothing edited yet: no draft is pending");
-        compare(page.localTooltipSwitch, appSettings.showTooltips,
-                "the switch drafts mirror the persisted settings on open");
+        compare(page.localTooltipSwitch, messagingHelper.show_tooltips,
+                "the switch drafts mirror the mirrored snapshot on open");
         popPage();
     }
 
@@ -179,19 +164,20 @@ TestCase {
         var page = pushPage();
         var tooltip = Harness.findItem(page, "tooltipSwitch");
         verify(tooltip !== null, "the tooltip switch is reachable");
-        compare(appSettings.showTooltips, true, "the store default");
+        compare(messagingHelper.show_tooltips, true, "the mirrored default");
 
         compare(tooltip.checked, true, "the switch mirrors the draft on open");
         tooltip.click(); // the user path (press+release); page.onToggled joins the draft
         compare(page.localTooltipSwitch, false, "the click joins the draft");
-        compare(appSettings.showTooltips, true, "the persisted state waits for Apply");
+        compare(messagingHelper.show_tooltips, true,
+                "the mirrored state waits for Apply");
         Harness.step(this, Harness.hold(this, () => applyAction(page).enabled, 5000),
                "a pending draft enables Apply",
                (ok) => Harness.capture(this, ok, appShell));
 
         apply(page); // synchronous commits, then the layer pops
-        compare(appSettings.showTooltips, false, "the draft is committed");
-        compare(appSettings.showDebugTooltips, false,
+        compare(messagingHelper.show_tooltips, false, "the draft is committed");
+        compare(messagingHelper.show_debug_tooltips, false,
                 "debug tooltips pair with the master tooltip switch");
     }
 
@@ -230,7 +216,7 @@ TestCase {
         // finished synchronously before the page popped.
         verify(messagingHelper.is_autostart(),
                "Apply wrote the desktop entry: the file-based check reads it back");
-        compare(appSettings.background, true,
+        compare(messagingHelper.background, true,
                 "the paired background draft was committed with it");
     }
 
@@ -251,7 +237,7 @@ TestCase {
 
         apply(page);
         verify(!messagingHelper.is_autostart(), "Apply removed the desktop entry");
-        compare(appSettings.background, true,
+        compare(messagingHelper.background, true,
                 "background keeps the forced-on draft, untouched by the removal");
     }
 
@@ -280,9 +266,9 @@ TestCase {
 
         Harness.capture(this, applyAction(page).enabled, appShell, "filled");
         apply(page);
-        var committed = appSettings.colorSettings;
+        var committed = messagingHelper.color_settings;
         compare(committed["CATEGORY:RULETEST"], "#000000",
-                "Apply persisted the appended rule with its draft color");
+                "Apply carried the appended rule with its draft color");
     }
 
     function test_removing_a_rule_row_cancels_the_addition() {

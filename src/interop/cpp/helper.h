@@ -6,7 +6,6 @@
 #include <QApplication>
 #include <QPalette>
 #include <QIcon>
-#include <QSettings>
 #include <QSystemTrayIcon>
 #include <QWindow>
 #include <QTranslator>
@@ -48,14 +47,10 @@ inline void appSetWindowIcon(QApplication& app, const QString& path) {
   app.setWindowIcon(QIcon(path));
 }
 
-// Two entry points for the "keep running in the background" preference:
-//
-// - syncBackgroundBehavior() (startup): reads the persisted "background"
-//   QSettings key written by QML's Settings object (same store: org/app
-//   names are set before the engine loads).
-// - setBackgroundBehavior() (live Apply): the requested state flows in
-//   explicitly because QSettings syncs lazily (~500ms) — reading the file
-//   right after a QML write could race and see the stale value.
+// One entry point for the "keep running in the background" preference:
+// the requested state flows in explicitly. The source of truth is the
+// daemon's settings store; the boot snapshot and every mirrored Apply
+// (both via Rust's apply_settings paths) keep this in sync.
 //
 // With background running enabled, quitting on the last window being
 // hidden/closed must be disabled: hiding rhesis' window would otherwise
@@ -66,13 +61,6 @@ inline void setBackgroundBehavior(bool enabled) {
         qInfo() << "background running:" << enabled
                 << "-> quitOnLastWindowClosed:" << !enabled;
     }
-}
-
-inline void syncBackgroundBehavior() {
-    QSettings backgroundSettings;
-    const bool background =
-        backgroundSettings.value(QStringLiteral("background")).toBool();
-    setBackgroundBehavior(background);
 }
 
 // Hide every visible top-level window without closing it (the close handler
@@ -108,13 +96,6 @@ inline void appRaiseMainWindow() {
         window->raise();
         window->requestActivate();
     }
-}
-
-// QSettings defaults to the registry on Windows. Rust reads the persisted
-// language from the INI file (see language.rs), so keep a single file-based
-// store on every platform. Must run before any QSettings (QML Settings) exists.
-inline void useIniSettingsFormat() {
-    QSettings::setDefaultFormat(QSettings::IniFormat);
 }
 
 inline void setupIconTheme() {

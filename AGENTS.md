@@ -26,56 +26,69 @@ RUST_BUILD_TYPE=release scripts/build-common.sh
 
 | Path | Role |
 |------|------|
-| `src/main.rs` | Entrypoint, `#[tokio::main]`, creates QApplication + QQmlApplicationEngine |
-| `src/interop/` | CXX-Qt FFI bridge (`bridge.rs`), QML UI (`qml/`), custom highlighter |
-| `src/languagetool/` | HTTP client to local LanguageTool server, `client.rs`, `models.rs`, `service.rs` |
+| `crates/rhesis-protocol` | Wire schema + framing for the daemon↔client socket (`PROTOCOL`, `DaemonMsg`/`ClientMsg`, postcard + `u32` length prefix) |
+| `crates/rhesis-settings` | The settings store the daemon owns (INI, migration, camelCase keys) |
+| `crates/rhesis-service` | Headless daemon binary: owns the LanguageTool server + all settings, one client session (`src/session.rs`, `daemon.rs`) — no Qt |
+| `crates/rhesis-platform` | OS surface (single-instance, autostart, process helpers, config paths, translations dir) — no Qt, no HTTP |
+| `crates/rhesis-languagetool` | LanguageTool worker library (used by the daemon): server lifecycle, HTTP client, fixture provider |
+| `src/main.rs` | UI-only entrypoint: plain `fn main`, Qt session + `connection::boot_snapshot()`, engine load |
+| `src/connection.rs` | The client's single wire-aware module: probe, spawn, handshake, reconnect loop, commands |
+| `src/fake_daemon.rs` | Test-only in-process daemon fixture (Qt tiers point their clients at it) |
+| `src/interop/` | CXX-Qt FFI bridge (`bridge.rs`), QML UI (`qml/`), custom highlighter, settings MIRROR properties |
 
 - UI: Qt6/KDE Kirigami via CXX-Qt (Rust↔C++↔QML), QML files in `src/interop/qml/`
-- Rust app POSTs text to `localhost:2689/v2/check`, renders grammar suggestions with `CustomHighlighter`
-- LanguageTool runs as a child process; messaging is async via tokio channels (debounced 300ms)
+- The UI is a thin client: the daemon binary owns the LanguageTool server and the
+  settings store; the Qt process reads settings and drives the server only
+  over a local socket (`interprocess` 2: abstract UDS / named pipe,
+  `RHESIS_SERVICE_SOCKET` test seam) — one client slot, strict `Hello`
+  handshake, replay-then-relay
+- UI renders grammar suggestions with `CustomHighlighter`; text checks cross
+  the wire as `Check` frames (the daemon debounces)
+- LanguageTool still runs as a child of the daemon; daemon messaging is
+  threaded-sync over crossbeam channels
 
 ## Testing
 
-One command runs everything: `cargo test`. QML suites included — the
-`qml-suites` target launches the `rhesis-ui-runner` binary, so `cargo test`
-covers the full stack from DTO parsing to painted highlights.
+```sh
+cargo test --workspace
+```
 
 Test targets are declared explicitly in `Cargo.toml` (`[[test]]`): test files
-no longer live directly in `tests/`, so cargo cannot auto-discover them. A new
-file under `tests/unit/` or `tests/e2e/` needs its `[[test]]` entry or it
-silently never runs.
+live in subdirectories (crate-local
+`tests/unit/`), so cargo cannot auto-discover them. A new test file needs
+its `[[test]]` entry or it silently never runs.
 
 ```sh
-# The whole stack (unit + E2E + QML suites; ~20s)
-cargo test
-
 # One tier, while iterating
-cargo test --lib                                     # in-module tests (~22)
-cargo test --test languagetool-service               # worker loop
-cargo test --test qml-suites                         # tests/ui/*.qml
-cargo test --test ui-boot                            # real Root.qml boot
-cargo test --test single-instance-e2e                # two real launches
+cargo test -p rhesis --lib                             # in-module tests (Qt tier)
+cargo test -p rhesis-languagetool --lib                # worker/provider internals
+cargo test -p rhesis-platform --lib                    # autostart layout logic
+cargo test --workspace --test languagetool-service     # worker loop
+cargo test --workspace --test qml-suites               # tests/ui/*.qml
+cargo test --workspace --test ui-boot                  # real Root.qml boot
+cargo test --workspace --test single-instance-e2e      # two real launches
 ```
 
 Layout:
 
 | Path | Contents |
 |------|----------|
-| `src/**` | `#[cfg(test)]` modules for private-logic tests (worker, autostart, provider, highlighter) |
-| `tests/unit/` | Public-API unit tiers: client, models, recommendation, helper, guard |
+| `src/**` | `#[cfg(test)]` modules for private-logic tests (highlighter fan-out/spy sink, connection backoff, snapshot parse→QVariant) |
+| `crates/rhesis-languagetool` | `src/provider.rs` in-module tests + tiers `languagetool_{client,models,service}` under `tests/unit/`, fixtures under `tests/fixtures/lt/` |
+| `crates/rhesis-platform` | `autostart.rs` in-module tests + `single-instance` tier under `tests/unit/` |
 | `tests/e2e/` | Whole-process tiers: `ui_boot.rs`, `single_instance_e2e.rs`, `qml_suites.rs` |
 | `tests/ui/` | Qt Quick Test suites (`tst_*.qml`) + `harness.js` |
 | `tests/common/` | Shared sandbox/seed helpers, symlinked into the E2E tier (`tests/e2e/common`) |
 
 Nothing is feature-gated: there is no `ui-harness` feature, and QuickTest is
 compiled unconditionally by `build.rs` (the shipped binary simply never
-references it).
+references it — verified by the gate below).
 
 Gates after every change:
 
 - `cargo fmt`
-- `cargo clippy --all-targets` — 0 warnings
-- `cargo test` — clean, no skips
+- `cargo clippy --workspace --all-targets` — 0 warnings
+- `cargo test --workspace` — clean, no skips
 - shipped binary must not link QuickTest: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`
 
 ### Hermeticity
@@ -83,11 +96,15 @@ Gates after every change:
 Every tier is offline and side-effect free by construction, so no test needs
 a LanguageTool installation or a running server:
 
-- Worker requests are answered by the recorded fixture (`RHESIS_FAKE_LT`,
+- Worker/provider requests are answered by the recorded fixture (`RHESIS_FAKE_LT`,
   resolved by `CompletionProvider::chosen`) — never java, never the network.
+  The Qt tiers never own a worker: they point their clients at the in-process
+  fake daemon (`src/fake_daemon.rs`), whose socket name is pinned through
+  `RHESIS_SERVICE_SOCKET` ahead of every client (the env pin also disables
+  detached-binary spawning in `connection.rs`).
 - `tests/common/mod.rs` (in-process tiers) and `src/ui_tests.rs :: isolate_environment`
   (QML runner) redirect every XDG home into `build/ui-tests/<tier>-env`, so
-  autostart files and `QSettings` never touch the real user configuration.
+  autostart files and every configuration path stay in the sandbox.
 
 ### Tier notes
 
@@ -150,8 +167,8 @@ correctness, one packages releases.
 `build-app.yml` — the common build (`workflow_call`), called first by both
 other workflows:
 
-- `test` mode: `cargo test --no-run` (every test target, the app and the QML
-  runner, compiled once) plus `cargo clippy --all-targets`, so the lint
+- `test` mode: `cargo test --workspace --no-run` (every test target, the app and the QML
+  runner, compiled once) plus `cargo clippy --workspace --all-targets`, so the lint
   pass's check-mode artifacts are cached with the build; `release` mode:
   `scripts/build-common.sh` (app, fastText, language model, LanguageTool,
   trimmed JRE)
@@ -176,7 +193,7 @@ other workflows:
 `test.yml` — the only place tests run in CI:
 
 - Triggers: pushes to `main`/`develop`, PRs into them, manual dispatch
-- Gates: `cargo fmt --check` and `cargo test -- --skip qml_suites_pass`;
+- Gates: `cargo fmt --check` and `cargo test --workspace -- --skip qml_suites_pass`;
   clippy runs in the shared build (test mode) because its check-mode
   artifacts are a different compiler pipeline from the test binaries and
   must be cached there, or every run rechecks the whole dependency graph.

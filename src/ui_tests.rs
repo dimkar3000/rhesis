@@ -52,14 +52,21 @@ fn sandbox_root() -> PathBuf {
 }
 
 /// Runs Qt Quick Test over the suites under [`suite_root`], guaranteeing
-/// hermeticity first: the fake completion provider is seeded (no network,
-/// no embedded java server) and every XDG home the test process could touch
-/// is redirected into a fresh sandbox directory, before Qt or the worker
-/// read any environment. Screenshots land in `build/tests/` beneath the
-/// project root, named `<suite>_<test>[_<label>]_<PASS|FAIL>.png`.
+/// hermeticity first: the in-process fake daemon is started and pinned to
+/// the runner's socket (`RHESIS_SERVICE_SOCKET`, set before any client can
+/// read the env — this runs before Qt, before the boot probe, before
+/// anything), the fake completion provider is not needed anymore (the
+/// daemon owns workers) but seeding stays harmless for the embedded-record
+/// provider paths, and every XDG home the test process could touch is
+/// redirected into a fresh sandbox directory, before Qt reads any
+/// environment. Screenshots land in `build/tests/` beneath the project
+/// root, named `<suite>_<test>[_<label>]_<PASS|FAIL>.png`.
 ///
 /// Returns Qt's exit code; the runner binary is expected to exit with it.
 pub fn run_suites() -> i32 {
+    // The fake daemon owns the socket name for this process: the boot probe
+    // in connection.rs sees the env pin and never spawns a detached binary.
+    crate::fake_daemon::spawn();
     seed_fake_provider();
     if let Err(message) = isolate_environment() {
         eprintln!("ui-tests: refusing to run: {message}");

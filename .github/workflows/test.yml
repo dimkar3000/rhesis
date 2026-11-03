@@ -81,7 +81,7 @@ jobs:
       # the test binaries, so running it here would re-check every dependency
       # on every run instead of reusing the cached result.
       - name: Formatting
-        run: cargo fmt --check
+        run: cargo fmt --workspace --check
 
       - name: Tests
         # `qml_suites_pass` is the only test in the QML page-suite target.
@@ -89,4 +89,4 @@ jobs:
         # local-development tool; CI runs every assertion tier but does not
         # generate images. Run it locally with:
         #   cargo test --test qml-suites
-        run: cargo test -- --skip qml_suites_pass
+        run: cargo test --workspace -- --skip qml_suites_pass

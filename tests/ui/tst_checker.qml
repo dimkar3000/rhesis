@@ -1,10 +1,11 @@
-// Page-level suite for the checker flow: worker status, recorded answers
+// Page-level suite for the checker flow: service status, recorded answers
 // becoming painted recommendations, and the clean-text path.
 //
 // The shell inside mirrors Root.qml's object graph (same hook order —
-// highlighter first, helper second) and runs the hermetic fake provider
-// seeded by the runner (`RHESIS_FAKE_LT=checker`), so no LanguageTool is
-// ever spawned: requests answer from tests/fixtures/lt/checker.json.
+// highlighter first, helper second) and connects to the runner's fake
+// daemon (spooled by ui_tests.rs :: run_suites through RHESIS_SERVICE_SOCKET),
+// so no LanguageTool is ever spawned: requests answer from the fixture
+// table in src/fake_daemon.rs.
 //
 // Qt Quick Test loads this file into a QQuickView, so the root must remain
 // a plain item (TestCase) — the app shell lives below it as a nested,
@@ -18,7 +19,7 @@ import "harness.js" as Harness
 TestCase {
     name: "checker"
 
-    // Worker status codes (WorkerStatus::code, languagetool/service.rs):
+    // Worker status codes (WorkerStatus::code, rhesis-protocol):
     readonly property int statusStarted: 2
 
     // Fixture constants — the recorded field text and the ranges it reports
@@ -26,9 +27,8 @@ TestCase {
     readonly property string fixtureText: "She like football and play the guitar quicly."
     readonly property string cleanText: "This sentence has no problems."
 
-    // Color the pipeline stamps on recommendations when no user rules are
-    // known — the fake builds its answers with an empty rule table, so this
-    // is the color every fixture rec paints (client.rs select_color default).
+    // Color the fixture stamps on its recommendations ("#FF0000" on the
+    // wire; QML compares lowercase hex to the image pixels).
     readonly property string pipelineDefaultColor: "#ff0000"
 
     Kirigami.ApplicationWindow {
@@ -38,22 +38,11 @@ TestCase {
         width: 1280
         height: 720
 
-        // Settings store: only what MainPage consumes; colorSettings carries
-        // the Root.qml defaults so update_colors runs like production does.
-        QtObject {
-            id: appSettings
-            property bool showTooltips: true
-            property bool showDebugTooltips: true
-            property var colorSettings: ({
-                    "CATEGORY:GRAMMAR": "#ecc224",
-                    "CATEGORY:TYPOGRAPHY": "#f63ef9",
-                    "CATEGORY:TYPOS": "#1ae918"
-                })
-        }
-
-        // Declaration order matters: the highlighter wires the message
-        // fan-out (which also starts the fake worker) before the helper
-        // completes and requests the local server — as in Root.qml.
+        // Declaration order matters: the highlighter wires the connection to
+        // the runner's fake daemon before the helper completes — as in
+        // Root.qml. The daemon drives the mirror from here: its handshake
+        // replay (snapshot + status) fills the helper properties, and every
+        // check answer flows back through the fan-out.
         CustomHighlighter {
             id: highlighter
             Component.onCompleted: highlighter.startMessageThread(messagingHelper)
@@ -61,17 +50,12 @@ TestCase {
 
         AsyncMessagingHelper {
             id: messagingHelper
-            Component.onCompleted: {
-                messagingHelper.restart(true, "2689");
-                messagingHelper.update_colors(appSettings.colorSettings);
-            }
         }
 
         pageStack.initialPage: MainPage {
             id: mainPage
             highlighter: highlighter
             helper: messagingHelper
-            settings: appSettings
         }
     }
 
@@ -79,10 +63,10 @@ TestCase {
         return Harness.findItem(appShell.pageStack, "checkerTextArea");
     }
 
-    function test_fake_worker_reaches_started() {
+    function test_fake_service_replays_started() {
         Harness.step(this, Harness.hold(this,
                             () => messagingHelper.server_status === statusStarted, 5000),
-               "the fake provider boots the worker into Started without any server",
+               "the fake daemon's handshake replay reads Started without any server",
                (ok) => Harness.capture(this, ok, textArea()));
     }
 

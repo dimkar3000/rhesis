@@ -1,4 +1,3 @@
-import QtCore
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as Controls
@@ -29,39 +28,13 @@ Controls.ApplicationWindow {
     // icon: without one a hidden app would be stranded with no way back in,
     // so it quits the traditional way.
     onClosing: close => {
-        if (appSettings.background && appSettings.embedded && trayIcon.available) {
+        if (messagingHelper.background && messagingHelper.embedded && trayIcon.available) {
             close.accepted = false;
             root.visible = false;
         } else {
             close.accepted = true;
             Qt.quit();
         }
-    }
-
-    Settings {
-        id: appSettings
-        // Server selection: true uses the bundled LanguageTool, false
-        // connects to an external LanguageTool instance.
-        property bool embedded: true
-        // Port for the embedded server.
-        property string port: "2689"
-        property string defaultPort: "2689"
-        // Base URL of the external server (e.g. "http://192.168.1.10:8081").
-        property string externalAddress: ""
-        // Keep Rhesis alive when the window is closed so the embedded
-        // LanguageTool server stays reachable for other applications
-        // (http://127.0.0.1:<port>/v2/check) and the tray icon lets the
-        // user reopen or quit.
-        property bool background: false
-        property bool showTooltips: true
-        property bool showDebugTooltips: true
-        // Locale code (e.g. "el_GR"); empty means system locale.
-        property string language: ""
-        property var colorSettings: ({
-                "CATEGORY:GRAMMAR": "#ecc224",
-                "CATEGORY:TYPOGRAPHY": "#f63ef9",
-                "CATEGORY:TYPOS": "#1ae918"
-            })
     }
 
     // Reopen the window from the tray (menu, click, ...).
@@ -85,15 +58,17 @@ Controls.ApplicationWindow {
     Platform.SystemTrayIcon {
         id: trayIcon
 
-        // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
+        // Worker status codes, see WorkerStatus::code in rhesis-protocol:
         // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
-        // 4 = Connecting, 5 = FailedToRespond.
+        // 4 = Connecting, 5 = FailedToRespond; 6 = client-local
+        // Disconnected (no daemon session).
         readonly property int statusStopped: 0
         readonly property int statusStarting: 1
         readonly property int statusStarted: 2
         readonly property int statusFailed: 3
         readonly property int statusConnecting: 4
         readonly property int statusFailedToRespond: 5
+        readonly property int statusDisconnected: 6
         readonly property int workerStatus: messagingHelper ? messagingHelper.server_status : statusStopped
         readonly property bool serverBusy: workerStatus === statusStarting
             || workerStatus === statusStarted
@@ -102,13 +77,13 @@ Controls.ApplicationWindow {
 
         // Background hosting offers the tray always; a hidden launch does
         // too: the tray is the only way back in for a hidden window.
-        visible: (appSettings.background && appSettings.embedded) || hiddenLaunch
+        visible: (messagingHelper.background && messagingHelper.embedded) || hiddenLaunch
 
         // Must be a real "qrc:" URL: the ":/..." resource shorthand is not
         // resolved by Qt.labs.platform's icon loader.
         icon.source: "qrc:/icons/hicolor/256x256/apps/logo.png"
         tooltip: {
-            const address = "http://127.0.0.1:" + (appSettings.port || appSettings.defaultPort);
+            const address = "http://127.0.0.1:" + (messagingHelper.port || messagingHelper.default_port);
             switch (workerStatus) {
             case statusStarted:
             case statusFailedToRespond:
@@ -136,10 +111,10 @@ Controls.ApplicationWindow {
                 text: trayIcon.serverBusy
                     ? qsTr("tray_stop_server")
                     : qsTr("tray_start_server")
-                // While the worker latched into Failed only the in-window
-                // retry action can recover it (see MAX_START_FAILURES);
-                // starting from the tray would silently do nothing.
-                enabled: appSettings.embedded && trayIcon.workerStatus !== trayIcon.statusFailed
+                // While the daemon's failure budget latched into Failed only
+                // the in-window retry action can recover it; starting from
+                // the tray would silently do nothing.
+                enabled: messagingHelper.embedded && trayIcon.workerStatus !== trayIcon.statusFailed
                 onTriggered: {
                     if (trayIcon.serverBusy)
                         messagingHelper.stop_server();
@@ -149,10 +124,24 @@ Controls.ApplicationWindow {
             }
             Platform.MenuSeparator {}
             Platform.MenuItem {
+                text: qsTr("tray_quit_service")
+                // The daemon is the background process: quitting it takes the
+                // LanguageTool server down for every client, which is why
+                // this is an explicit menu item instead of the implicit app
+                // exit. The UI follows (a disconnected UI is of no use; the
+                // connection loop stops on the same Shutdown command).
+                onTriggered: {
+                    messagingHelper.quit_service();
+                    Qt.quit();
+                }
+            }
+            Platform.MenuItem {
                 text: qsTr("tray_quit")
-                // Qt.quit() tears the QML engine down, which drops
-                // AsyncMessagingHelperRust and sends Kill to the worker:
-                // the LanguageTool child is stopped before the app exits.
+                // Qt.quit() tears the QML engine down, which drops the
+                // AsyncMessagingHelper: with background hosting off its Drop
+                // asks the daemon to quit, so the LanguageTool child is
+                // stopped before the app exits. With background on the
+                // daemon keeps running and the tray comes back at login.
                 onTriggered: Qt.quit()
             }
         }
@@ -161,7 +150,6 @@ Controls.ApplicationWindow {
     Component {
         id: settingsPage
         SettingsPage {
-            settings: appSettings
             helper: messagingHelper
             langManager: languageManager
             appWindow: root
@@ -182,10 +170,6 @@ Controls.ApplicationWindow {
 
     AsyncMessagingHelper {
         id: messagingHelper
-        Component.onCompleted: {
-            messagingHelper.restart(appSettings.embedded, appSettings.embedded ? appSettings.port : appSettings.externalAddress);
-            messagingHelper.update_colors(appSettings.colorSettings);
-        }
     }
 
     Controls.StackView {
@@ -196,7 +180,6 @@ Controls.ApplicationWindow {
             id: mainPage
             highlighter: highlighter
             helper: messagingHelper
-            settings: appSettings
             onSettingsRequested: pageStack.push(settingsPage)
         }
     }

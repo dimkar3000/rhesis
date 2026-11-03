@@ -5,8 +5,12 @@ authors = ["dimkar <dimkar3000@gmail.com>"]
 edition = "2021"
 license = "MIT"
 
+# Must stay first: `grep -m1 '^version'` (scripts/check-versions.sh) and
+# CMake's `file(STRINGS ... "^version =")` (CMakeLists.txt) both read the
+# first `version` line, so the package section anchors the project version.
+
 [dependencies]
-crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
+crossbeam = { workspace = true }
 cxx = "1.0.176"
 cxx-qt = "0.9.1"
 cxx-qt-lib = { version = "0.9.1", features = ["qt_full"] }
@@ -14,16 +18,39 @@ cxx-qt-lib-extras = { version = "0.9.1" }
 
 env_logger = "0.11.11"
 lazy_static = "1.5.0"
+log = { workspace = true }
+# Local-socket transport for the daemon connection (Refactor.md §5): the
+# client keeps no tokio and no reqwest; every wire type lives in
+# rhesis-protocol.
+interprocess = "2"
+
+rhesis-platform = { path = "crates/rhesis-platform" }
+rhesis-protocol = { path = "crates/rhesis-protocol" }
+
+[workspace]
+members = [
+    "crates/rhesis-platform",
+    "crates/rhesis-languagetool",
+    "crates/rhesis-protocol",
+    "crates/rhesis-settings",
+    "crates/rhesis-service",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.6.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 log = "0.4.33"
 reqwest = { version = "0.13.4", features = ["json", "form"] }
 serde = { version = "1.0.228", features = ["serde_derive"] }
 # The fake completion provider (RHESIS_FAKE_LT) parses recorded fixtures,
 # so this is a runtime dependency, not just a dev one.
 serde_json = "1.0"
-
 tokio = { version = "1.52.3", features = ["full", "sync"] }
-
-[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -84,35 +111,3 @@ path = "tests/e2e/qml_suites.rs"
 [[test]]
 name = "single-instance-e2e"
 path = "tests/e2e/single_instance_e2e.rs"
-
-# --- Unit tiers (public API, no Qt application) -----------------------------
-
-# LanguageTool client: mock HTTP server, DTO -> Recommendation mapping.
-[[test]]
-name = "languagetool-client"
-path = "tests/unit/languagetool_client.rs"
-
-# LanguageTool worker: event loop, status transitions, debounce (mock server).
-[[test]]
-name = "languagetool-service"
-path = "tests/unit/languagetool_service.rs"
-
-# LanguageTool DTO: serde round-trip against a recorded response.
-[[test]]
-name = "languagetool-models"
-path = "tests/unit/languagetool_models.rs"
-
-# Recommendation -> QML conversion.
-[[test]]
-name = "recommendation"
-path = "tests/unit/recommendation.rs"
-
-# Async messaging helper: worker lifecycle, status mirroring, forwarding.
-[[test]]
-name = "async-messaging-helper"
-path = "tests/unit/async_messaging_helper.rs"
-
-# Single-instance guard: socket naming, show request payload.
-[[test]]
-name = "single-instance"
-path = "tests/unit/single_instance.rs"

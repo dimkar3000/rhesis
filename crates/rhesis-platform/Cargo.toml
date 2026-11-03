@@ -1,0 +1,19 @@
+[package]
+name = "rhesis-platform"
+description = "Platform surface for Rhesis: single-instance guard, autostart, process helpers, config paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+# Test targets are declared explicitly: the files live in tests/unit/ rather
+# than directly in tests/, so cargo cannot auto-discover them. A new test
+# file needs its [[test]] entry or it never runs.
+[[test]]
+name = "single-instance"
+path = "tests/unit/single_instance.rs"

@@ -40,6 +40,10 @@
         <translation>Γραμματική: Αποτυχία απάντησης</translation>
     </message>
     <message>
+        <source>lt_disconnected</source>
+        <translation>Γραμματική: Αποσυνδεδεμένη</translation>
+    </message>
+    <message>
         <source>lt_stopped</source>
         <translation>Γραμματική: Ανενεργή</translation>
     </message>
@@ -65,6 +69,10 @@
     <message>
         <source>tray_stop_server</source>
         <translation>Διακοπή server</translation>
+    </message>
+    <message>
+        <source>tray_quit_service</source>
+        <translation>Τερματισμός υπηρεσίας</translation>
     </message>
     <message>
         <source>tray_quit</source>
@@ -127,6 +135,10 @@
     <message>
         <source>lt_failed</source>
         <translation>Γραμματική: Αποτυχία</translation>
+    </message>
+    <message>
+        <source>lt_disconnected</source>
+        <translation>Γραμματική: Αποσυνδεδεμένη</translation>
     </message>
     <message>
         <source>lt_stopped</source>

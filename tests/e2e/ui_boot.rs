@@ -2,19 +2,22 @@
 //!
 //! Boots the real `Root.qml` inside a running QApplication by mirroring the
 //! production boot sequence (`src/main.rs :: run_ui`) step by step: identity,
-//! background-behavior sync, the single-instance guard, icon theme,
-//! translations, desktop file name, KDE style, engine load.
+//! the single-instance guard, the daemon snapshot probe, background
+//! behavior, autostart self-heal, icon theme, translations, desktop file
+//! name, KDE style, engine load.
 //!
 //! Every observed state is fetched back through the C++ probes
 //! (`src/ui_tests/harness.cpp`): expressions are evaluated in Root.qml's own
-//! scope, so `messagingHelper` / `highlighter` / `appSettings` — the ids the
-//! rest of the file wires together — are directly reachable without any QML
-//! or bridge changes.
+//! scope, so `messagingHelper` / `highlighter` — the ids the rest of the
+//! file wires together — are directly reachable without any QML or bridge
+//! changes.
 //!
 //! Hermeticity matches the QuickTest runner (`src/ui_tests.rs`): XDG homes
-//! are redirected into `build/ui-tests/boot-env` and `RHESIS_FAKE_LT=checker`
-//! is seeded, so the LanguageTool worker answers from the recorded fixture
-//! and never spawns java or touches the network.
+//! are redirected into `build/ui-tests/boot-env`, and the in-process fake
+//! daemon (`src/fake_daemon.rs`) owns the service socket through
+//! `RHESIS_SERVICE_SOCKET` — the boot probe and the steady-state connection
+//! find it, and the environment pin disables any detached-binary spawning.
+//! No java, no network, no real user configuration.
 //!
 //! Serialization: Qt allows one QApplication per process, and the test needs
 //! the event loop, so this target carries exactly one test. Run it with:
@@ -46,27 +49,26 @@ use cxx::UniquePtr;
 use cxx_qt_lib::{QGuiApplication, QQuickStyle, QString};
 use cxx_qt_lib_extras::{QApplication, QEventLoop};
 use rhesis::interop::bridge;
-use rhesis::interop::language::{find_translations_dir, persisted_language};
+use rhesis_platform::autostart;
+use rhesis_platform::resources::translations_dir;
+use rhesis_platform::single_instance;
 
 /// App id, doubling as the desktop file name (see main.rs).
 const NAMESPACE: &str = "io.github.dimkar3000.rhesis";
 
-/// Worker status codes (see `WorkerStatus::code` in languagetool/service.rs);
-/// the fake provider settles on Started without any server.
+/// Worker status codes (see `WorkerStatus::code` in rhesis-protocol); the
+/// fake daemon boots as if its embedded server were already serving, so its
+/// replay settles on Started immediately.
 const STATUS_STARTED: i32 = 2;
 
 /// The recorded field text ("checker" fixture) and its clean counterpart.
 const FIXTURE_TEXT: &str = "She like football and play the guitar quicly.";
 const CLEAN_TEXT: &str = "This sentence has no problems.";
 
-/// How long a condition may take (worker boot, pipeline, secondary launch).
+/// How long a condition may take (replay wiring, pipeline, secondary launch).
 const WORKER_BOOT_TIMEOUT: Duration = Duration::from_secs(5);
 const PIPELINE_TIMEOUT: Duration = Duration::from_secs(5);
 const STAND_DOWN_TIMEOUT: Duration = Duration::from_secs(15);
-/// QQmlSettings stores a property change from a 500ms timer
-/// (`settingsWriteDelay` in Qt sources); polling the file keeps the wait
-/// adaptive instead of assuming the delay verbatim.
-const SETTINGS_STORE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Event-loop pump pacing: enough per pump to hand the worker threads wall
 /// time, small enough to keep assertions snappy.
@@ -127,12 +129,20 @@ extern "C" {
 
 #[test]
 fn full_boot_drives_the_real_ui_end_to_end() {
-    // Hermeticity first: sandbox, fake provider, offscreen rendering. All of
-    // these must exist before Qt or a worker can read any environment.
+    // Hermeticity first: sandbox, fake daemon, offscreen rendering. All of
+    // these must exist before Qt or a probe can read any environment. Exact
+    // order matters for the boot mirror below: offscreen + sandboxed homes,
+    // then Qt.
     force_offscreen_when_unset();
     if let Err(message) = common::isolate_environment("boot-env") {
         panic!("refusing to run: {message}");
     }
+    // The env pin freezes spawning: the steady-state client (and the boot
+    // probe) connects to THIS fixture and never execs a detached binary.
+    rhesis::fake_daemon::spawn();
+    // Kept for parity with the embedded-record provider selection; harmless
+    // in the daemon architecture because nothing in this process owns a
+    // worker.
     common::seed_fake_provider();
     env_logger::init();
 
@@ -142,37 +152,62 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     let mut application = QApplication::new();
     if let Some(mut app) = application.as_mut() {
         use std::pin::Pin;
-        // The QML Settings store inside Root.qml resolves its file location
-        // from these names, so they are set before the engine loads — as in
-        // main.rs, the same re-pins per call are its pattern for the
-        // by-value Pin receivers.
+        // Qt resolves its per-configuration paths from these names — set
+        // before the engine loads, exactly as in main.rs (the same re-pins
+        // per call are the pattern for the by-value Pin receivers).
         Pin::as_mut(&mut app).set_organization_name(&QString::from("rhesis"));
         Pin::as_mut(&mut app).set_organization_domain(&QString::from("dimkar.org"));
         Pin::as_mut(&mut app).set_application_name(&QString::from("Rhesis"));
     }
 
-    // Persisted "background" preference -> quitOnLastWindowClosed.
-    bridge::ffi::syncBackgroundBehavior();
-
-    // Single-instance guard: the boot tier must win the abstract socket. A
-    // live Rhesis (host install, flatpak, or a stale test process) would own
-    // it and this UI flow would then deliberately stand down.
-    if !rhesis::single_instance::acquire() {
+    // Single-instance guard first (as in run_ui): the boot tier must win the
+    // abstract socket. A live Rhesis (host install, flatpak, or a stale test
+    // process) would own it and this UI flow would then deliberately stand
+    // down.
+    if !single_instance::acquire() {
         panic!(
             "single-instance socket already owned — is another Rhesis running? \
              stop it before running the boot tier"
         );
     }
 
+    // Refactor.md §5 boot re-order: reach a daemon and read its snapshot
+    // BEFORE Qt builds anything. The env pin keeps the probe aimed at the
+    // in-process fixture; the single-client slot (§3) makes this strictly
+    // sequential — the steady-state connection starts later, from QML.
+    let snapshot = rhesis::connection::boot_snapshot();
+    let snapshot = snapshot.expect("the fake daemon must answer the boot probe");
+    assert_eq!(snapshot.port, 2689, "fixture default port");
+    assert!(snapshot.embedded, "fixture defaults to the embedded server");
+    assert!(
+        !snapshot.background,
+        "fixture default stays in the foreground"
+    );
+    assert_eq!(
+        snapshot.language, "",
+        "fixture language is the system locale"
+    );
+
+    // The preference the snapshot carries shapes the process before any
+    // window can exist (§5: mirror of main.rs).
+    bridge::ffi::setBackgroundBehavior(snapshot.background);
+
+    // Production parity: under $APPIMAGE the heal repoints the autostart
+    // entry; in this sandbox it is a no-op.
+    autostart::self_heal();
+
     bridge::ffi::setupIconTheme();
 
-    // Translations resolve the same way production does. A dev checkout keeps
-    // .ts sources only, so applyLanguage failing is expected here; the side
-    // effect worth exercising is the resolution order itself.
-    if let Some(dir) = find_translations_dir() {
+    // Translations resolve the same way production does: preferred-locale
+    // override straight from the snapshot (empty → system locale). A dev
+    // checkout keeps .ts sources only, so applyLanguage failing is expected
+    // here; the side effect worth exercising is the resolution order itself.
+    if let Some(dir) = translations_dir() {
         let dir = dir.to_string_lossy().to_string();
-        let preferred = persisted_language();
-        bridge::ffi::applyLanguage(&QString::from(&dir), &QString::from(preferred.as_str()));
+        bridge::ffi::applyLanguage(
+            &QString::from(&dir),
+            &QString::from(snapshot.language.as_str()),
+        );
     }
 
     // Engine, desktop identity and KDE style, in the same order production
@@ -188,6 +223,9 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     // ---------------------------------------------------------------------
     // Assertions while the real UI runs (one QApplication, one event loop).
     // ---------------------------------------------------------------------
+    // Root.qml's onCompleted wired the steady-state connection; the
+    // handshake replay (from the probe that just gave its slot back) lands
+    // the snapshot onto the helper mirror.
     let mut event_loop = QEventLoop::new();
 
     hold(
@@ -197,17 +235,38 @@ fn full_boot_drives_the_real_ui_end_to_end() {
                 if status == STATUS_STARTED {
                     None
                 } else {
-                    Some(format!("worker status is {status}"))
+                    Some(format!("service status is {status}"))
                 }
             })
         },
         WORKER_BOOT_TIMEOUT,
-        "the fake provider boots the worker into Started without any server",
+        "the fake daemon's replay reads Started without any server",
+    );
+
+    // The mirror properties are the snapshot's public face now: default port
+    // (as an int on the wire) and the fields the settings page drafts from.
+    assert_eq!(
+        expect_probe_int(root, "messagingHelper.port"),
+        2689,
+        "the replay mirrored the snapshot's port"
+    );
+    assert!(
+        expect_probe_bool(root, "messagingHelper.embedded"),
+        "the replay mirrored the embedded choice"
+    );
+    assert!(
+        !expect_probe_bool(root, "messagingHelper.background"),
+        "the replay mirrored the background preference"
+    );
+    assert_eq!(
+        expect_probe_string(root, "messagingHelper.language"),
+        "",
+        "the replay mirrored the (empty) language override"
     );
 
     // Real text pipeline: the page's TextArea feeds text_area_changed, the
-    // worker debounces and calls the fake provider, and the answer reaches
-    // the highlighter through the production message sink.
+    // daemon's fixture answers the Check frame, and the suggestion reaches
+    // the highlighter through the production fan-out.
     let text_area =
         expect_probe_find_object(root, "checkerTextArea", "the checker page's input field");
     expect_probe_write_string(text_area, "text", FIXTURE_TEXT);
@@ -305,7 +364,7 @@ fn full_boot_drives_the_real_ui_end_to_end() {
         "the sandboxed config root accepts an autostart entry"
     );
     assert!(
-        rhesis::autostart::is_enabled(),
+        autostart::is_enabled(),
         "set_autostart(true) wrote the desktop entry"
     );
     assert!(
@@ -314,74 +373,14 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     );
     let removed = expect_probe_bool(root, "messagingHelper.set_autostart(false)");
     assert!(removed, "the sandbox accepts removing the entry again");
-    assert!(!rhesis::autostart::is_enabled(), "the entry is gone");
-
-    // QSettings persistence roundtrip: the store write lands in the sandboxed
-    // INI file whose path the production reader resolves (org/app identity
-    // is set like in main.rs, so no explicit location pinning is needed).
-    // QQmlSettings does not write synchronously: a property change is cached
-    // and stored by a 500ms timer (`settingsWriteDelay` in Qt sources), and
-    // sync() only flushes the QSettings buffer without triggering it. The
-    // holds below therefore pump the loop until the timer's write has
-    // actually reached the file — flushing per poll — so the deadline adapts
-    // to whatever delay the Qt build really uses.
-    let conf = common::sandbox_root("boot-env").join("config/rhesis/Rhesis.conf");
-    let assigned = expect_probe_string(root, "appSettings.language = 'el_GR'");
-    assert_eq!(
-        assigned, "el_GR",
-        "the assignment expression's value confirms the new store state"
-    );
-    hold(
-        &mut event_loop,
-        || {
-            probe_int(root, "(appSettings.sync(), 1)")?;
-            let stored = std::fs::read_to_string(&conf).unwrap_or_default();
-            if stored.contains("language=el_GR") {
-                Ok(None)
-            } else {
-                Ok(Some(format!(
-                    "the store still holds {:?}",
-                    stored
-                        .lines()
-                        .filter(|line| line.starts_with("language"))
-                        .collect::<Vec<_>>()
-                )))
-            }
-        },
-        SETTINGS_STORE_TIMEOUT,
-        "the delayed settings write stores the assigned language",
-    );
-    assert_eq!(
-        persisted_language(),
-        "el_GR",
-        "the production reader sees the persisted language"
-    );
-
-    expect_probe_string(root, "appSettings.language = ''");
-    hold(
-        &mut event_loop,
-        || {
-            probe_int(root, "(appSettings.sync(), 1)")?;
-            let stored = std::fs::read_to_string(&conf).unwrap_or_default();
-            if !stored.contains("language=el_GR") {
-                Ok(None)
-            } else {
-                Ok(Some("the store still holds el_GR".to_string()))
-            }
-        },
-        SETTINGS_STORE_TIMEOUT,
-        "the delayed settings write stores the reset",
-    );
-    assert_eq!(
-        persisted_language(),
-        "",
-        "resetting the store falls back to the system locale"
-    );
+    assert!(!autostart::is_enabled(), "the entry is gone");
 
     // Single-instance, end to end: the runner thread is up in this process
-    // (Root's Component.onCompleted started it next to the message thread),
-    // so a real launch of the shipped binary connects, nudges this instance
-    // and exits without any UI of its own.
+    // (Root's Component.onCompleted started it next to the connection), so a
+    // real launch of the shipped binary connects, nudges this instance and
+    // exits without any UI of its own. It inherits the service-socket pin,
+    // but the stand-down happens before the boot probe — exactly the order
+    // the production guard runs in.
     assert_secondary_instance_stands_down();
 
     // Evidence capture (best effort; a null grab is a diagnostic, not a

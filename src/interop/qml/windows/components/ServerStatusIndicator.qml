@@ -6,15 +6,17 @@ Item {
     id: root
 
     property var helper
-    // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
+    // Worker status codes, see WorkerStatus::code in rhesis-protocol:
     // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
-    // 4 = Connecting, 5 = FailedToRespond.
+    // 4 = Connecting, 5 = FailedToRespond; 6 = client-local
+    // Disconnected (no daemon session).
     readonly property int statusStopped: 0
     readonly property int statusStarting: 1
     readonly property int statusStarted: 2
     readonly property int statusFailed: 3
     readonly property int statusConnecting: 4
     readonly property int statusFailedToRespond: 5
+    readonly property int statusDisconnected: 6
     property int status: helper ? helper.server_status : statusStopped
     property string reason: helper ? helper.server_status_reason : ""
     // Manual retry only makes sense when nothing retries on its own: a
@@ -33,6 +35,7 @@ Item {
             return dark ? "#6ccb5f" : "#0f7b0f";
         case statusStarting:
         case statusConnecting:
+        case statusDisconnected:
             return dark ? "#fce100" : "#9d5d00";
         case statusStopped:
             return dark ? "#8a8a8a" : "#767676";
@@ -53,6 +56,8 @@ Item {
             return qsTr("lt_failed_to_respond");
         case statusFailed:
             return qsTr("lt_failed");
+        case statusDisconnected:
+            return qsTr("lt_disconnected");
         default:
             return qsTr("lt_stopped");
         }

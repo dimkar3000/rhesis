@@ -8,7 +8,6 @@ Kirigami.Page {
     id: mainPage
     padding: 0
 
-    property var settings
     property int wordStart: 0
     property int wordEnd: 0
     property CustomHighlighter highlighter
@@ -17,15 +16,17 @@ Kirigami.Page {
     actions: [
         Kirigami.Action {
             id: serverStatusAction
-            // Worker status codes, see WorkerStatus::code in languagetool/service.rs:
+            // Worker status codes, see WorkerStatus::code in rhesis-protocol:
             // 0 = Stopped, 1 = Starting, 2 = Started, 3 = Failed,
-            // 4 = Connecting, 5 = FailedToRespond.
+            // 4 = Connecting, 5 = FailedToRespond; 6 = client-local
+            // Disconnected (no daemon session).
             readonly property int statusStopped: 0
             readonly property int statusStarting: 1
             readonly property int statusStarted: 2
             readonly property int statusFailed: 3
             readonly property int statusConnecting: 4
             readonly property int statusFailedToRespond: 5
+            readonly property int statusDisconnected: 6
             readonly property bool canRetry: workerStatus === statusFailed
             readonly property int workerStatus: helper ? helper.server_status : statusStopped
             text: {
@@ -40,6 +41,8 @@ Kirigami.Page {
                     return qsTr("lt_failed_to_respond");
                 case statusFailed:
                     return qsTr("lt_failed");
+                case statusDisconnected:
+                    return qsTr("lt_disconnected");
                 default:
                     return qsTr("lt_stopped");
                 }
@@ -50,6 +53,7 @@ Kirigami.Page {
                     return "emblem-ok";
                 case statusStarting:
                 case statusConnecting:
+                case statusDisconnected:
                     return "emblem-synchronizing";
                 default:
                     return "dialog-error";
@@ -88,7 +92,7 @@ Kirigami.Page {
                 text: suggestion
                 Controls.ToolTip {
                     text: tooltip
-                    visible: parent.hovered && settings.showTooltips
+                    visible: parent.hovered && helper.show_tooltips
                     delay: 500
                     timeout: 2500
                     x: parent.width + 10
@@ -108,7 +112,7 @@ Kirigami.Page {
                 let suggestion = suggestions[i].value;
 
                 let tooltip = suggestions[i].tooltip;
-                if (settings.showDebugTooltips) {
+                if (helper.show_debug_tooltips) {
                     // Imperative: refreshes on every rebuild (each keystroke),
                     // so a language switch applies here without extra handling.
                     tooltip = `[${suggestions[i].language}] ${suggestions[i].tooltip}\n\n${qsTr("more_info_tooltip")} ${qsTr("rule_id_label")} ${suggestions[i].rule_id}\n${qsTr("category_id_label")} ${suggestions[i].category_id}`;

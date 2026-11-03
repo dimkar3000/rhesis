@@ -1,0 +1,19 @@
+[package]
+name = "rhesis-protocol"
+description = "Wire schema and framing for the Rhesis daemon↔client socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+# Frame bytes are postcard; `use-std` unlocks std-based serialization
+# (collections, to_vec) — the one justified feature flag (Refactor.md §8).
+postcard = { version = "1.1", features = ["use-std"] }
+
+# Test targets are declared explicitly: the files live in tests/unit/ rather
+# than directly in tests/, so cargo cannot auto-discover them. A new test
+# file needs its [[test]] entry or it never runs.
+[[test]]
+name = "protocol"
+path = "tests/unit/protocol.rs"
