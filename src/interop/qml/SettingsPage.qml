@@ -442,55 +442,80 @@ Kirigami.Page {
                 Kirigami.FormData.label: qsTr("background_section")
             }
 
-            Controls.Switch {
-                id: autostartSwitch
-                // Named for the page-level suite (tests/ui/tst_settings.qml).
-                objectName: "autostartSwitch"
+            // Label left, toggle right: the rows read like the desktop
+            // settings convention (the label sits at the form's left edge,
+            // the toggle at the row's right edge). FormLayout right-aligns
+            // labels in its label column by default and gives rows their
+            // implicit width, so each row is a filling RowLayout with a
+            // filler item; labelAlignment pins the label to the section's
+            // left edge.
+            RowLayout {
                 Kirigami.FormData.label: qsTr("autostart_switch_label")
-                checked: localAutostartSwitch
-                onToggled: {
-                    if (!pageInitDone) {
-                        return;
-                    }
-                    // Draft only: the entry files get written by Apply. While
-                    // the autostart draft is enabled, background hosting is
-                    // forced on and its switch stays locked — a hidden-at-
-                    // login app must keep hosting/holding the tray state.
-                    // Unchecking releases the lock, keeping the forced value
-                    // for the user to adjust.
-                    localAutostartSwitch = checked;
-                    if (checked) {
-                        localBackgroundSwitch = true;
-                    }
+                Kirigami.FormData.labelAlignment: Qt.AlignLeft
+                Layout.fillWidth: true
+
+                Item {
+                    Layout.fillWidth: true
                 }
 
-                Controls.ToolTip {
-                    text: qsTr("autostart_tooltip")
-                    visible: parent.hovered
+                Controls.Switch {
+                    id: autostartSwitch
+                    // Named for the page-level suite (tests/ui/tst_settings.qml).
+                    objectName: "autostartSwitch"
+                    checked: localAutostartSwitch
+                    onToggled: {
+                        if (!pageInitDone) {
+                            return;
+                        }
+                        // Draft only: the entry files get written by Apply. While
+                        // the autostart draft is enabled, background hosting is
+                        // forced on and its switch stays locked — a hidden-at-
+                        // login app must keep hosting/holding the tray state.
+                        // Unchecking releases the lock, keeping the forced value
+                        // for the user to adjust.
+                        localAutostartSwitch = checked;
+                        if (checked) {
+                            localBackgroundSwitch = true;
+                        }
+                    }
+
+                    Controls.ToolTip {
+                        text: qsTr("autostart_tooltip")
+                        visible: parent.hovered
+                    }
                 }
             }
 
-            Controls.Switch {
-                id: backgroundSwitch
-                objectName: "backgroundSwitch"
+            RowLayout {
                 Kirigami.FormData.label: qsTr("background_switch_label")
-                // Only the embedded server can be hosted in the background;
-                // external servers are shared machines of their own. While
-                // autostart is on, the pairing locks the switch regardless.
-                enabled: localEmbedded && !localAutostartSwitch
-                checked: localBackgroundSwitch
-                onToggled: {
-                    if (!pageInitDone) {
-                        return;
-                    }
-                    // Draft only: the daemon snapshot and the host behavior
-                    // are committed by Apply (see the Apply action).
-                    localBackgroundSwitch = checked;
+                Kirigami.FormData.labelAlignment: Qt.AlignLeft
+                Layout.fillWidth: true
+
+                Item {
+                    Layout.fillWidth: true
                 }
 
-                Controls.ToolTip {
-                    text: qsTr("background_tooltip")
-                    visible: parent.hovered
+                Controls.Switch {
+                    id: backgroundSwitch
+                    objectName: "backgroundSwitch"
+                    // Only the embedded server can be hosted in the background;
+                    // external servers are shared machines of their own. While
+                    // autostart is on, the pairing locks the switch regardless.
+                    enabled: localEmbedded && !localAutostartSwitch
+                    checked: localBackgroundSwitch
+                    onToggled: {
+                        if (!pageInitDone) {
+                            return;
+                        }
+                        // Draft only: the daemon snapshot and the host behavior
+                        // are committed by Apply (see the Apply action).
+                        localBackgroundSwitch = checked;
+                    }
+
+                    Controls.ToolTip {
+                        text: qsTr("background_tooltip")
+                        visible: parent.hovered
+                    }
                 }
             }
 
@@ -499,20 +524,38 @@ Kirigami.Page {
                 Kirigami.FormData.label: qsTr("tooltip_settings_section")
             }
 
-            Controls.Switch {
-                id: tooltipSwitch
-                objectName: "tooltipSwitch"
+            RowLayout {
                 Kirigami.FormData.label: qsTr("enable_tooltip_label")
-                checked: localTooltipSwitch
-                onToggled: localTooltipSwitch = checked
+                Kirigami.FormData.labelAlignment: Qt.AlignLeft
+                Layout.fillWidth: true
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Controls.Switch {
+                    id: tooltipSwitch
+                    objectName: "tooltipSwitch"
+                    checked: localTooltipSwitch
+                    onToggled: localTooltipSwitch = checked
+                }
             }
 
-            Controls.Switch {
-                id: debugTooltips
+            RowLayout {
                 Kirigami.FormData.label: qsTr("more_info_label")
-                enabled: tooltipSwitch.checked
-                checked: localDebugTooltipSwitch
-                onToggled: localDebugTooltipSwitch = checked
+                Kirigami.FormData.labelAlignment: Qt.AlignLeft
+                Layout.fillWidth: true
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                Controls.Switch {
+                    id: debugTooltips
+                    enabled: tooltipSwitch.checked
+                    checked: localDebugTooltipSwitch
+                    onToggled: localDebugTooltipSwitch = checked
+                }
             }
         }
     }
