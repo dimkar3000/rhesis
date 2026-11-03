@@ -1587,6 +1587,7 @@ dependencies = [
  "rhesis-protocol",
  "rhesis-settings",
  "serde_json",
+ "winresource",
 ]
 
 [[package]]

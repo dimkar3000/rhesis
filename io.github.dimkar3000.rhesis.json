@@ -20,6 +20,7 @@
 			"buildsystem": "simple",
 			"build-commands": [
 				"install -Dm755 bin/rhesis /app/bin/rhesis",
+				"install -Dm755 bin/rhesis-service /app/bin/rhesis-service",
 				"install -Dm755 fasttext-source/fasttext /app/bin/fasttext",
 				"install -Dm644 lid.176.ftz /app/share/rhesis/lid.176.ftz",
 				"mkdir -p /app/lib /app/share/rhesis",

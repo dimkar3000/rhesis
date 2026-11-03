@@ -22,22 +22,27 @@ find_package(Qt6 COMPONENTS LinguistTools QUIET)
 # --- Options ---
 set(CARGO_BUILD_PROFILE "release" CACHE STRING "Cargo build profile (release, release-fast, debug)")
 
-# --- Build the Rust binary ---
-# Packaging needs the app binary only; the QML-test runner binary
-# (`rhesis-ui-runner`) is built by `cargo test` when it is needed.
+# --- Build the Rust binaries ---
+# Packaging ships both: the Qt client (`rhesis`) and the headless
+# LanguageTool-service daemon (`rhesis-service`). The QML-test runner
+# binary (`rhesis-ui-runner`) is built by `cargo test` when it is needed.
 add_custom_target(rhesis_build ALL
-    COMMAND cargo build --bin rhesis
-        --profile ${CARGO_BUILD_PROFILE} 
+    COMMAND cargo build
+        -p rhesis --bin rhesis
+        -p rhesis-service --bin rhesis-service
+        --profile ${CARGO_BUILD_PROFILE}
         --target-dir ${CMAKE_CURRENT_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Building rhesis with cargo (profile=${CARGO_BUILD_PROFILE})"
+    COMMENT "Building rhesis + rhesis-service with cargo (profile=${CARGO_BUILD_PROFILE})"
 )
 
 # Determine binary output location
 if(CARGO_BUILD_PROFILE STREQUAL "debug")
     set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/debug/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
+    set(RHESIS_SERVICE_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/debug/rhesis-service${CMAKE_EXECUTABLE_SUFFIX}")
 else()
     set(RHESIS_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/${CARGO_BUILD_PROFILE}/${RHESIS_BINARY_NAME}${CMAKE_EXECUTABLE_SUFFIX}")
+    set(RHESIS_SERVICE_BINARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/${CARGO_BUILD_PROFILE}/rhesis-service${CMAKE_EXECUTABLE_SUFFIX}")
 endif()
 
 # --- Translations ---

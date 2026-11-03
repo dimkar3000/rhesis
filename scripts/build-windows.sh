@@ -138,8 +138,13 @@ build_translations() {
 
 build_rust_app() {
     cd "$PROJECT_DIR"
-    # Only the shipped binary: develop also builds rhesis-ui-runner for the tests.
-    cargo build --profile "$CARGO_PROFILE" --bin rhesis
+    # Only the shipped binaries: the client + its headless service
+    # daemon (develop also builds rhesis-ui-runner for the tests).
+    # Scoped --bin flags: bare --bin names resolve against the
+    # default-run package and would reject the daemon's bin.
+    cargo build --profile "$CARGO_PROFILE" \
+        -p rhesis --bin rhesis \
+        -p rhesis-service --bin rhesis-service
 }
 
 # --- Download and trim LanguageTool (same trimming as build-common.sh) ---
@@ -207,18 +212,25 @@ EOF
 }
 
 # --- Assemble the install layout used by both the zip and the installer ---
-#   Rhesis/rhesis.exe + Qt runtime, translations/, LanguageTool/, jre/
+#   Rhesis/rhesis.exe + rhesis-service.exe + Qt runtime, translations/,
+#   LanguageTool/, jre/
 stage_payload() {
     rm -rf "$STAGE_PARENT"
     mkdir -p "$STAGE_DIR/translations"
 
+    # Both exes sit in one directory: the client finds the daemon beside
+    # its own executable (rhesis-service links no Qt, it just needs to be
+    # staged like rhesis.exe).
     local binary="$TARGET_DIR/$PROFILE_DIR/rhesis.exe"
-    if [ ! -f "$binary" ]; then
-        echo "Error: binary not found at $binary" >&2
+    local service="$TARGET_DIR/$PROFILE_DIR/rhesis-service.exe"
+    if [ ! -f "$binary" ] || [ ! -f "$service" ]; then
+        echo "Error: binaries not found at $binary and/or $service" >&2
         return 1
     fi
-    cp "$binary" "$STAGE_DIR/"
+    cp "$binary" "$service" "$STAGE_DIR/"
 
+    # Qt deployment runs against the client only: the daemon carries no
+    # Qt linkage (checked in CI), so there is nothing to collect for it.
     "$QT_BIN/windeployqt.exe" \
         --qmldir "$(winpath "$PROJECT_DIR/src/interop/qml/windows")" \
         --no-translations \

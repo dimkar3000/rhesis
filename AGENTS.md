@@ -8,19 +8,25 @@ scripts/setup.sh          # downloads LanguageTool, builds fastText, downloads l
 
 ## Build
 
-CMake orchestrates the Rust build (not plain `cargo build`). Two profiles:
+CMake orchestrates the packaging build (not plain `cargo build`). Two profiles:
 
 ```sh
-# default (thin LTO, fast iteration)
+# dev: build BOTH binaries side by side first (the client spawns its
+# sibling daemon; without it the UI boots into Disconnected and warns)
+cargo build --workspace
 cargo run
 
-# full release (LTO, stripped)
+# full release (LTO, stripped) — builds everything payloads need
 RUST_BUILD_TYPE=release scripts/build-common.sh
 ```
 
 - Cargo target dir is `build/target` (not `target`) — set in `.cargo/config.toml` (gitignored; CI sets `CARGO_TARGET_DIR` explicitly)
 - Uses `mold` linker on Linux (same config file)
-- Dev run: `RUST_LOG=trace cargo run` for full LanguageTool debug output
+- Dev run: `RUST_LOG=trace cargo run` for connection diagnostics; the spawned daemon logs to nowhere (detached stdio) — `RUST_LOG=trace ./build/target/debug/rhesis-service` watches it instead
+- Packaging builds both binaries: CMake's `rhesis_build` runs the scoped
+  `cargo build -p rhesis --bin rhesis -p rhesis-service --bin rhesis-service`
+  (bare `--bin` names resolve against the default-run package only); the
+  QML-test runner binary (`rhesis-ui-runner`) is built by `cargo test` when needed
 
 ## Architecture
 
@@ -63,7 +69,9 @@ its `[[test]]` entry or it silently never runs.
 cargo test -p rhesis --lib                             # in-module tests (Qt tier)
 cargo test -p rhesis-languagetool --lib                # worker/provider internals
 cargo test -p rhesis-platform --lib                    # autostart layout logic
+cargo test -p rhesis-service --lib                     # daemon store/session internals
 cargo test --workspace --test languagetool-service     # worker loop
+cargo test --workspace --test daemon-session           # daemon↔client wire, store
 cargo test --workspace --test qml-suites               # tests/ui/*.qml
 cargo test --workspace --test ui-boot                  # real Root.qml boot
 cargo test --workspace --test single-instance-e2e      # two real launches
@@ -74,6 +82,7 @@ Layout:
 | Path | Contents |
 |------|----------|
 | `src/**` | `#[cfg(test)]` modules for private-logic tests (highlighter fan-out/spy sink, connection backoff, snapshot parse→QVariant) |
+| `crates/rhesis-service` | daemon-session tier under `tests/unit/` (wire semantics against a real store) |
 | `crates/rhesis-languagetool` | `src/provider.rs` in-module tests + tiers `languagetool_{client,models,service}` under `tests/unit/`, fixtures under `tests/fixtures/lt/` |
 | `crates/rhesis-platform` | `autostart.rs` in-module tests + `single-instance` tier under `tests/unit/` |
 | `tests/e2e/` | Whole-process tiers: `ui_boot.rs`, `single_instance_e2e.rs`, `qml_suites.rs` |
@@ -89,7 +98,15 @@ Gates after every change:
 - `cargo fmt`
 - `cargo clippy --workspace --all-targets` — 0 warnings
 - `cargo test --workspace` — clean, no skips
-- shipped binary must not link QuickTest: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`
+- shipped binaries' linkage: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`, and `rhesis-service` greps nothing for `qt[0-9]|quicktest` (enforced in CI's test.yml; the client's QuickTest gate stays a local check)
+
+### Headless rule
+
+`rhesis-service` must never gain a Qt dependency (not even transitively in its
+linkage): it is the process that may run with no UI around, and every flavor
+ships it next to the client for that purpose. CI's "Daemon binary links no Qt"
+step fails the run otherwise; keep it that way when touching Cargo.toml or
+Docker/CI plumbing.
 
 ### Hermeticity
 
@@ -193,7 +210,9 @@ other workflows:
 `test.yml` — the only place tests run in CI:
 
 - Triggers: pushes to `main`/`develop`, PRs into them, manual dispatch
-- Gates: `cargo fmt --check` and `cargo test --workspace -- --skip qml_suites_pass`;
+- Gates: `cargo fmt --check`, the "Daemon binary links no Qt" check
+  (`ldd build/target/debug/rhesis-service` must show no Qt/QuickTest — the
+  headless rule above), and `cargo test --workspace -- --skip qml_suites_pass`;
   clippy runs in the shared build (test mode) because its check-mode
   artifacts are a different compiler pipeline from the test binaries and
   must be cached there, or every run rechecks the whole dependency graph.
@@ -220,7 +239,7 @@ other workflows:
 - Triggers: tags matching `v*` or manual dispatch
 - Custom Docker image (`ghcr.io/<owner>/rhesis-ci:kde-6.11`)
 - Tag format determines profile: `v*-*` (pre-release) → `release-fast`, stable tag → `release`
-- Builds Flatpak + AppImage + desktop tarballs via one `build-linux` step (wrapper script `scripts/build-linux.sh` around `build-flatpak.sh`, `build-appimage.sh` and `build-desktop.sh` — global and `--local`), uploads to release on version tags
+- Builds Flatpak + AppImage + desktop tarballs via one `build-linux` step (wrapper script `scripts/build-linux.sh` around `build-flatpak.sh`, `build-appimage.sh` and `build-desktop.sh` — global and `--local`), and the Windows installer + zip via `scripts/build-windows.sh`; every flavor ships both binaries (`rhesis` client + `rhesis-service` daemon in one `bin/`; the daemon links no Qt), uploads to release on version tags
 - Release includes `runner.sh` alongside the desktop tarballs for download-and-install
 
 ## Releasing

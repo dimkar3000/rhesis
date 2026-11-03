@@ -244,14 +244,17 @@ install_app() {
 
     mkdir -p "$bin_dir" "$share_dir"
 
+    # Both binaries ship side by side (same bin/): the Qt client finds the
+    # headless service daemon as a sibling of its own executable
+    # (`connection.rs :: spawn path`, `rhesis-platform :: exe_dir`).
     local cmake_build="$BUILD_DIR/cmake-build"
     local binary_dir="$cmake_build/$RUST_BUILD_TYPE"
-    if [ -f "$binary_dir/rhesis" ]; then
-        cp "$binary_dir/rhesis" "$bin_dir/"
-    elif [ -f "$cmake_build/rhesis" ]; then
-        cp "$cmake_build/rhesis" "$bin_dir/"
+    if [ -f "$binary_dir/rhesis" ] && [ -f "$binary_dir/rhesis-service" ]; then
+        cp "$binary_dir/rhesis" "$binary_dir/rhesis-service" "$bin_dir/"
+    elif [ -f "$cmake_build/rhesis" ] && [ -f "$cmake_build/rhesis-service" ]; then
+        cp "$cmake_build/rhesis" "$cmake_build/rhesis-service" "$bin_dir/"
     else
-        echo "Error: Binary not found in $binary_dir or $cmake_build" >&2
+        echo "Error: binaries not found in $binary_dir or $cmake_build (need rhesis + rhesis-service)" >&2
         return 1
     fi
 

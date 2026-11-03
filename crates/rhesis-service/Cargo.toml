@@ -18,6 +18,11 @@ rhesis-settings = { path = "../rhesis-settings" }
 rhesis-languagetool = { path = "../rhesis-languagetool" }
 rhesis-platform = { path = "../rhesis-platform" }
 
+[build-dependencies]
+# Version info and icon for the Windows service executable (same identity
+# block as the client; see the root build.rs).
+winresource = "0.1"
+
 [dev-dependencies]
 # The daemon-session tier reads the owned store file directly for its
 # persistence assertions.

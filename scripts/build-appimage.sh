@@ -101,6 +101,7 @@ bundle_qt() {
     # linuxdeploy's bundled strip doesn't understand modern ELF sections (.relr.dyn)
     NO_STRIP=1 "$LINUXDEPLOY" --appdir "$APPDIR" \
         --executable "$APPDIR/app/bin/rhesis" \
+        --executable "$APPDIR/app/bin/rhesis-service" \
         --desktop-file "$APPDIR/app/share/applications/io.github.dimkar3000.rhesis.desktop" \
         --icon-file "$APPDIR/app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png"
 

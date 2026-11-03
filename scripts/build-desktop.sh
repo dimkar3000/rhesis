@@ -52,7 +52,10 @@ install_payload() {
 
     mkdir -p "$bin_dir" "$lib_dir" "$trans_dir"
 
+    # Both binaries land in one bin/: the client finds the headless daemon
+    # beside its own executable (connection.rs :: daemon_binary, exe_dir).
     cp "$ARTIFACTS_DIR/app/bin/rhesis" "$bin_dir/"
+    cp "$ARTIFACTS_DIR/app/bin/rhesis-service" "$bin_dir/"
     cp "$ARTIFACTS_DIR/fastText/fasttext" "$bin_dir/"
 
     mkdir -p "$lib_dir/jre"

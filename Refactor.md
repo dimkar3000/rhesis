@@ -317,10 +317,46 @@ both .ts (lupdate green, no drops; el_GR translated). Gates: fmt, clippy 0 warni
 workspace-wide, `cargo test --workspace` green, `ldd rhesis | grep -c QuickTest` = 0.
 `tests/unit/` (root) deleted with its `[[test]]` entry.
 
-### Phase 5 — Packaging & docs
-- [ ] Both binaries in all flavors; runner.sh; Windows resources for both exes
-- [ ] CI: service-binary no-Qt check; gates unchanged
-- [ ] AGENTS.md rewrite; CHANGELOG entry
+### Phase 5 — Packaging & docs — DONE
+- [x] Both binaries in all flavors; runner.sh; Windows resources for both exes
+- [x] CI: service-binary no-Qt check; gates unchanged
+- [x] AGENTS.md rewrite; CHANGELOG entry
+
+Phase-5 notes: CMake `rhesis_build` = `cargo build -p rhesis --bin rhesis -p rhesis-service
+--bin rhesis-service` (scoped flags REQUIRED: bare `--bin` names resolve against the
+default-run package and would reject the daemon's bin) + a `RHESIS_SERVICE_BINARY_PATH`
+computed like the client's — verified by a real release-fast build (both exes in
+`build/cmake-build/release-fast/`, daemon `ldd`-grep 0 for `qt[0-9]|quicktest`). `install_app`
+(refactor of build-common.sh) installs bin/rhesis + bin/rhesis-service from the same profile
+dir and HARD-FAILS when the daemon is missing (proven negative path); build-desktop
+`install_payload`, build-appimage (linuxdeploy `--executable` for the daemon too; the app/
+tree copy already carried both), the flatpak manifest build-commands, and build-windows
+(`--profile` build + `stage_payload` copies rhesis-service.exe beside rhesis.exe;
+windeployqt stays on the client only — the daemon links no Qt) all carry both. All four
+ flavors verified by artifact-tree construction with the debug bins; the Inno `.iss`
+needed no change (`Source: "{#SourceDir}\*"`). Windows resources for the daemon: new
+`crates/rhesis-service/build.rs` (winresource 0.1 build-dep), FileDescription "Rhesis
+Service" / OriginalFilename `rhesis-service.exe` / shared product name+publisher+icon
+path `../../assets/rhesis.ico` (compile-gated to windows targets, no-op elsewhere — same
+shape as the root build.rs, which keeps applying only to its own crate). CI: test.yml
+gains the "Daemon binary links no Qt (headless check)" step after fmt (fails when
+`build/target/debug/rhesis-service` is not built or greps `qt[0-9]|quicktest`); the
+client's QuickTest gate stays a documented local gate (nothing in CI ran it before
+either). runner.sh's contract holds unchanged (client finds the sibling via exe_dir; the
+daemon inherits runner's PATH prepend through spawn_detached so bundled java/fasttext
+resolve) — one comment line added. CHANGELOG: new `## [0.7.0]` section (undated: dates
+are pinned at tagging per the release flow; generate-metainfo ran clean with today's
+date + tag warning; metainfo NOT committed per AGENTS.md). README: intro/architecture/
+local-dev/CI/Option-3/Key-Components updated to the two-binary reality (dev = `cargo
+build --workspace` then `cargo run`; client spawns the sibling daemon). AGENTS.md: Build
+(dev run + scoped packaging command + daemon log redirection), Testing (rhesis-service
+lib tier + daemon-session [[test]] tier in the command list/layout table), gates (both
+binaries' linkage: client QuickTest=0 local check, daemon no-Qt enforced in CI), new
+"Headless rule" section, build.yml paragraph (Four flavors, both binaries, windows
+script). Gates after the packaging change: fmt clean, clippy 0 warnings, `cargo test
+--workspace` green (124 passed/0 failed, verified twice incl. one run under concurrent
+cargo+make load), `ldd`-gates pass on debug AND release-fast binaries (client
+QuickTest-count 0, daemon qt/quicktest-count 0).
 
 ## 12. Constants
 

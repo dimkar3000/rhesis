@@ -210,8 +210,9 @@ install() {
 launch() {
     # $1 = normal|hidden. Resolves the install PREFIX for this launcher's
     # location and execs the payload. Beyond starting the binary, the
-    # wrapper puts the payload's bin/ first on PATH so the embedded server
-    # can find the bundled java/fasttext.
+    # wrapper puts the payload's bin/ first on PATH so the daemon (spawned
+    # as a sibling of the client from the same folder) and the embedded
+    # server can find the bundled java/fasttext.
     if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
         PREFIX="${HOME}/.local/share/rhesis"
     elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then

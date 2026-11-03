@@ -2,14 +2,16 @@
 
 A Qt/KDE desktop writing assistant powered by LanguageTool, written in Rust.
 
-Rhesis runs a local [LanguageTool](https://languagetool.org) HTTP server and communicates with it over loopback to provide grammar and style checking.
+Rhesis hosts a local [LanguageTool](https://languagetool.org) HTTP server inside a headless daemon and talks to it over loopback to provide grammar and style checking.
 
 ## Architecture
 
-A Rust Qt6/KDE desktop client that communicates over HTTP with a local
-LanguageTool server (Java, runs on a trimmed JRE inside the flatpak).
-LanguageTool uses a bundled fastText binary + model for language
-identification.
+Two binaries: a headless daemon (`rhesis-service`) that owns the LanguageTool
+server and all settings, and the Qt6/KDE desktop client (`rhesis`) which
+mirrors settings, submits text checks and renders suggestions over a local
+socket to it. LanguageTool (Java, on a trimmed JRE inside the packages) uses
+a bundled fastText binary + model for language identification. The daemon
+outlives the client, so the server keeps running when the window closes.
 
 ## Installation
 
@@ -43,8 +45,9 @@ chmod +x rhesis-<version>-x86_64.AppImage
 
 ### Option 3: Native install (desktop tarball + runner.sh)
 
-Installs a launcher, desktop entry, bundled JRE and LanguageTool to `/usr`
-(global) or `~/.local` (per-user). `runner.sh` automatically downloads the
+Installs a launcher, desktop entry, both binaries (client + daemon), a
+bundled JRE and LanguageTool to `/usr` (global) or `~/.local` (per-user).
+`runner.sh` automatically downloads the
 matching tarball from the latest release; if you placed a
 `rhesis-<version>-x86_64[-local].tar.gz` in the current directory, it is
 used instead.
@@ -114,8 +117,10 @@ lrelease translations/*.ts
 
 # Extract LanguageTool-6.6.zip (https://languagetool.org/download/) so that
 # build/LanguageTool/languagetool-server.jar exists. Without a Java on PATH or
-# a bundled jre\ the embedded server cannot start.
+# a bundled jre\ the daemon cannot start the embedded server.
 
+# Build the client and daemon side by side, then run
+cargo build --workspace
 cargo run
 
 # Portable zip + installer into build/artifacts/windows (Git Bash; the installer
@@ -129,10 +134,14 @@ scripts/build-windows.sh
 # Downloads LanguageTool release, builds fastText, downloads lid.176.ftz
 scripts/setup.sh
 
-# Builds and runs the app; LanguageTool server starts automatically
+# Builds the client and its daemon side by side, then runs the client;
+# it starts the daemon as a sibling process, which boots the LanguageTool
+# server automatically
+cargo build --workspace
 cargo run
 
-# Enable full LanguageTool debug output
+# Connection diagnostics on the client (the detached daemon logs nowhere;
+# run it yourself with the same variable to see its logs)
 RUST_LOG=trace cargo run
 ```
 
@@ -179,8 +188,10 @@ version tags (`v*`) or manually:
   final releases only, via `scripts/check-versions.sh`.
 - The tag format selects the build profile: `v*-*` (pre-release) →
   `release-fast`, stable tag → `release`.
-- Builds all three distribution flavors — Flatpak, AppImage, and desktop
-  tarballs (global and `--local`) — plus `runner.sh`.
+- Builds all four distribution flavors — Flatpak, AppImage, desktop
+  tarballs (global and `--local`), and the Windows installer + zip —
+  plus `runner.sh`. Every flavor bundles both binaries (client +
+  daemon).
 - On version tags, everything is attached to the GitHub release, with
   release notes generated from `CHANGELOG.md` (`scripts/release-body.py`).
 
@@ -263,7 +274,8 @@ are checksummed for reproducibility.
 
 | Component | Language | Role |
 |-----------|----------|------|
-| `rhesis` | Rust | Qt6/KDE desktop UI, HTTP client to LanguageTool |
+| `rhesis` | Rust | Qt6/KDE desktop UI and client of the local daemon |
+| `rhesis-service` | Rust | Headless daemon that owns LanguageTool, settings and the check pipeline |
 | `LanguageTool/` | Java | Language checking server (HTTP API on :2689) |
 | `fastText` | C++ | Language identification (binary, called by LT) |
 | `lid.176.ftz` | data | fastText language model (938 KB) |
