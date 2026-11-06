@@ -1,8 +1,9 @@
+use rhesis_protocol::{Range, Recommendation};
+
 use crate::{
     constants::{CHECK_PATH, DEFAULT_MATCH_COLOR},
     helpers::{normalize_address, ColorRules},
     models::LanguageToolDto,
-    recommendation::{Range, Recommendation},
 };
 
 #[derive(Default)]

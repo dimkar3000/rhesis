@@ -10,16 +10,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::completion_provider::CompletionProvider;
 use crate::constants::{FASTTEXT_LAYOUTS, MAX_START_FAILURES};
-use crate::{completion_provider::CompletionProvider, recommendation::Recommendation};
 use crossbeam::channel::{after, unbounded, Receiver, Sender};
 
-use rhesis_protocol::constants::DEFAULT_PORT;
 /// Lifecycle status of the LanguageTool server connection: the single
 /// definition lives in `rhesis-protocol` (the wire type the daemon pushes);
 /// re-exported here so `rhesis_languagetool::service::WorkerStatus` paths
 /// keep working.
 pub use rhesis_protocol::WorkerStatus;
+use rhesis_protocol::{constants::DEFAULT_PORT, Recommendation};
 
 #[derive(Debug, Clone)]
 pub enum Message {

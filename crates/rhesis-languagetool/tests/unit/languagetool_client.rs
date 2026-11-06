@@ -10,8 +10,8 @@ use rhesis_languagetool::{
         Category, Context, Language, LanguageDetectedLanguage, LanguageToolDto, Match, Replacement,
         Rule, Software, Type, Warnings,
     },
-    recommendation::Range,
 };
+use rhesis_protocol::{Range, Recommendation};
 
 /// Builds a minimal LanguageTool response with a single match
 fn make_dto(rule_id: &str, category_id: &str, offset: i32, length: i32) -> LanguageToolDto {
@@ -116,9 +116,7 @@ fn json_response(dto: &LanguageToolDto) -> Vec<u8> {
     serde_json::to_vec(dto).unwrap()
 }
 
-fn recommendation_ranges(
-    recommendations: &[rhesis_languagetool::recommendation::Recommendation],
-) -> Vec<Range> {
+fn recommendation_ranges(recommendations: &[Recommendation]) -> Vec<Range> {
     recommendations.iter().map(|r| r.range).collect()
 }
 

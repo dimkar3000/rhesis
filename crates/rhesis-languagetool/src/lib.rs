@@ -4,7 +4,6 @@
 pub mod client;
 pub mod constants;
 pub mod models;
-pub mod recommendation;
 pub mod service;
 
 mod completion_provider;

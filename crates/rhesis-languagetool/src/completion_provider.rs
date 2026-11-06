@@ -6,12 +6,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rhesis_protocol::Recommendation;
+
 use crate::{
     client::LanguageToolClient,
     constants::{FAKE_LT_ENV, FIXTURE_DIR},
     helpers::ColorRules,
     models::LanguageToolDto,
-    recommendation::Recommendation,
 };
 
 pub(crate) enum CompletionProvider {
