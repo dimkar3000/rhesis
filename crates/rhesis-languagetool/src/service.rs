@@ -10,9 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    client::LanguageToolClient, provider::CompletionProvider, recommendation::Recommendation,
-};
+use crate::{completion_provider::CompletionProvider, recommendation::Recommendation};
 use crossbeam::channel::{after, unbounded, Receiver, Sender};
 
 /// How many consecutive start attempts may fail before the worker gives up
@@ -103,12 +101,6 @@ pub struct LanguageToolWorker {
     status: WorkerStatus,
     consecutive_failures: u32,
     pub startup_timeout: Duration,
-    /// `true` when the worker must manage a real LanguageTool server
-    /// (spawn, health check, readiness probing). Resolved once when the
-    /// worker thread starts, from the provider actually chosen: a recorded
-    /// fixture answers on its own, so the server lifecycle is skipped
-    /// entirely instead of spawning java that nothing would talk to.
-    server_required: bool,
 }
 
 /// Default Implementation of the LanguageToolWorker will just leave the service uninitialized. It's up to the user the set it up afterward and start it
@@ -131,8 +123,6 @@ impl Default for LanguageToolWorker {
             startup_timeout: Duration::from_secs(60),
             local_port: 2689,
             local_server_handle: None,
-            // Refined in `run_loop` once the provider is known.
-            server_required: true,
         }
     }
 }
@@ -218,11 +208,8 @@ impl LanguageToolWorker {
             }
         };
 
-        let mut provider = CompletionProvider::chosen(&self.active_address());
-        // A fake provider answers by itself: there is no server to spawn,
-        // probe or keep alive. Derived from the provider actually chosen so
-        // a fixture that failed to load (fallback to Live) still gets one.
-        self.server_required = !matches!(provider, CompletionProvider::Fake(_));
+        let mut provider = CompletionProvider::new(&self.active_address());
+
         let mut last_text = String::default();
 
         // Boot state: stopped, worker thread alive, no server.
@@ -428,7 +415,7 @@ impl LanguageToolWorker {
                 Outcome::Stop
             }
             LanguageToolWorkerEvent::SwitchToRemoteServer(address) => {
-                let address = LanguageToolClient::normalize_address(&address);
+                let address = crate::helpers::normalize_address(&address);
                 log::info!("Switching to external LanguageTool server at {address}");
                 self.remote_address = address.clone();
                 provider.update_address(&address);
@@ -538,18 +525,20 @@ impl LanguageToolWorker {
         }
     }
 
-    /// Verify a remote server without spawning anything.
     fn verify_remote(
         &mut self,
         provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) {
-        // No remote to reach: every lifecycle event settles through the
-        // normal success bookkeeping (set by construction, never queried).
-        if !self.server_required {
+        // No remote to reach: a recorded fixture answers on its own, so the
+        // verification settles through the success bookkeeping. Runtime
+        // check, not `#[cfg(test)]`: integration tiers compile this crate
+        // like production while still seeding a fixture provider.
+        if matches!(provider, CompletionProvider::Fake(_)) {
             self.record_success();
             return;
         }
+
         // Remember whether we are re-checking a connection that was already
         // up before (a retry during an outage): when that check fails, the
         // status must return to `FailedToRespond` (still probing as the user
@@ -616,10 +605,12 @@ impl LanguageToolWorker {
         provider: &mut CompletionProvider,
         runtime: &tokio::runtime::Runtime,
     ) {
-        // No java to spawn and no health to verify; jump straight to the
-        // success bookkeeping (Stopped -> Started, zero-latency). Set by
-        // construction, never queried at runtime.
-        if !self.server_required {
+        // No java to spawn and no health to verify: a recorded fixture
+        // answers every request itself, so jump straight to the success
+        // bookkeeping (Stopped -> Started, zero-latency). Runtime check, not
+        // `#[cfg(test)]`: integration tiers compile this crate like
+        // production while still seeding a fixture provider.
+        if matches!(provider, CompletionProvider::Fake(_)) {
             self.record_success();
             return;
         }

@@ -1,31 +1,22 @@
-//! Completion provider seam: where suggestions come from.
-//!
-//! The production provider ([`CompletionProvider::Live`]) talks to a
-//! LanguageTool server over HTTP through [`LanguageToolClient`].
-//!
-//! Selection is environmental and happens once per worker start: when
-//! `RHESIS_FAKE_LT=<fixture id>` is set, [`CompletionProvider::chosen`]
-//! loads the recorded fixture instead of the live client, and the worker
-//! skips the whole server lifecycle (there is no server to spawn). The UI
-//! harness and boot tiers seed the variable before the worker starts; in
-//! production it is never set, so the live client is chosen and nothing
-//! else changes.
+//! Completion provider is an abstaction over a the way we receive completions.
+//! The main reason would be testing were you don't want to provider host a langtool server and you want to run with your know fake data.
 
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-use crate::{client::LanguageToolClient, models::LanguageToolDto, recommendation::Recommendation};
+use crate::{
+    client::LanguageToolClient, helpers::ColorRules, models::LanguageToolDto,
+    recommendation::Recommendation,
+};
 
-/// Where completion (check) requests are answered by the worker.
 pub(crate) enum CompletionProvider {
     Live(LanguageToolClient),
     Fake(FakeProvider),
 }
 
 impl CompletionProvider {
-    /// Get suggestions for `text`. An `Err` marks the provider unresponsive.
     pub(crate) async fn check(&self, text: &str) -> Result<Vec<Recommendation>, String> {
         match self {
             CompletionProvider::Live(client) => client.get_recommendation(text).await,
@@ -33,8 +24,6 @@ impl CompletionProvider {
         }
     }
 
-    /// Lightweight readiness probe. The fake has no state to probe and
-    /// lifecycle paths short-circuit before this, so this arm is vacuous.
     pub(crate) async fn health_check(&self) -> bool {
         match self {
             CompletionProvider::Live(client) => client.health_check().await,
@@ -48,7 +37,7 @@ impl CompletionProvider {
     /// so the same recorded fixtures run everywhere without a LanguageTool
     /// installation. A fixture that fails to load falls back to the live
     /// client with a warning, so a broken harness never breaks a real boot.
-    pub(crate) fn chosen(base_address: &str) -> Self {
+    pub(crate) fn new(base_address: &str) -> Self {
         match std::env::var_os("RHESIS_FAKE_LT") {
             Some(id) => match FakeProvider::from_fixture(&id.to_string_lossy()) {
                 Ok(fake) => {
@@ -98,10 +87,10 @@ impl CompletionProvider {
 /// LanguageTool response (same shape as a live `/v2/check` answer) or a
 /// canned failure (`error`) to exercise unresponsive-provider paths.
 #[derive(serde::Deserialize)]
-struct FixtureEntry<'a> {
+struct FixtureEntry {
     text: String,
     #[serde(default)]
-    response: Option<LanguageToolDto<'a>>,
+    response: Option<LanguageToolDto>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -119,7 +108,7 @@ pub(crate) struct FakeProvider {
     /// input text → canned answer; an `Err` entry reports an outage.
     entries: HashMap<String, Result<Vec<Recommendation>, String>>,
     /// User color rules, applied to answers created after receiving them.
-    rules: HashMap<String, String>,
+    rules: ColorRules,
     address: String,
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -134,7 +123,7 @@ impl FakeProvider {
     fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            rules: HashMap::new(),
+            rules: ColorRules::default(),
             address: String::new(),
             requests: Arc::new(Mutex::new(Vec::new())),
         }
@@ -183,7 +172,7 @@ impl FakeProvider {
     /// Builder: map a real-shaped response through the live client's
     /// conversion (unit tests exercising the DTO mapping).
     #[cfg(test)]
-    fn respond_dto(mut self, text: &str, dto: LanguageToolDto<'static>) -> Self {
+    fn respond_dto(mut self, text: &str, dto: LanguageToolDto) -> Self {
         let recommendations = super::client::map_dto(dto, &self.rules);
         self.entries.insert(text.to_string(), Ok(recommendations));
         self
@@ -218,10 +207,7 @@ impl FakeProvider {
     }
 
     fn set_colors(&mut self, rules: Vec<(String, String)>) {
-        self.rules.clear();
-        for (key, value) in rules {
-            self.rules.insert(key, value);
-        }
+        self.rules = ColorRules::from_wire(rules);
     }
 
     fn address(&self) -> &str {
@@ -254,7 +240,7 @@ mod tests {
     /// A small LanguageTool-shaped response equivalent to a real server
     /// answer for "I has a mistake" (recorded live variants live in
     /// `tests/fixtures/lt/`). Fully owned so tests can hold and move it.
-    fn sample_dto() -> LanguageToolDto<'static> {
+    fn sample_dto() -> LanguageToolDto {
         use crate::models::*;
 
         LanguageToolDto {

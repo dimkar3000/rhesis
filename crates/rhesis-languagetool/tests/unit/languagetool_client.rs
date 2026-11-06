@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     io::{Read, Write},
     net::TcpListener,
     thread,
@@ -15,64 +14,59 @@ use rhesis_languagetool::{
 };
 
 /// Builds a minimal LanguageTool response with a single match
-fn make_dto(
-    rule_id: &str,
-    category_id: &str,
-    offset: i32,
-    length: i32,
-) -> LanguageToolDto<'static> {
+fn make_dto(rule_id: &str, category_id: &str, offset: i32, length: i32) -> LanguageToolDto {
     LanguageToolDto {
         software: Software {
-            name: Cow::Borrowed("LanguageTool"),
-            version: Cow::Borrowed("test"),
-            build_date: Cow::Borrowed(""),
+            name: "LanguageTool".to_string(),
+            version: "test".to_string(),
+            build_date: "".to_string(),
             api_version: 1,
             premium: false,
-            premium_hint: Cow::Borrowed(""),
-            status: Cow::Borrowed(""),
+            premium_hint: "".to_string(),
+            status: "".to_string(),
         },
         warnings: Warnings {
             incomplete_results: false,
         },
         language: Language {
-            name: Cow::Borrowed("English (US)"),
-            code: Cow::Borrowed("en-US"),
+            name: "English (US)".to_string(),
+            code: "en-US".to_string(),
             detected_language: LanguageDetectedLanguage {
-                name: Cow::Borrowed("English (US)"),
-                code: Cow::Borrowed("en-US"),
+                name: "English (US)".to_string(),
+                code: "en-US".to_string(),
                 confidence: 0.99,
-                source: Cow::Borrowed("fasttext"),
+                source: "fasttext".to_string(),
             },
         },
         matches: vec![Match {
-            message: Cow::Borrowed("Possible spelling mistake found."),
-            short_message: Cow::Borrowed("Spelling mistake"),
+            message: "Possible spelling mistake found.".to_string(),
+            short_message: "Spelling mistake".to_string(),
             replacements: vec![
                 Replacement {
-                    value: Cow::Borrowed("the"),
+                    value: "the".to_string(),
                 },
                 Replacement {
-                    value: Cow::Borrowed("teh"),
+                    value: "teh".to_string(),
                 },
             ],
             offset,
             length,
             context: Context {
-                text: Cow::Borrowed("some context"),
+                text: "some context".to_string(),
                 offset,
                 length,
             },
-            sentence: Cow::Borrowed("A sentence."),
+            sentence: "A sentence.".to_string(),
             match_type: Type {
-                type_name: Cow::Borrowed("misspelling"),
+                type_name: "misspelling".to_string(),
             },
             rule: Rule {
-                id: Cow::Owned(rule_id.to_string()),
-                description: Cow::Borrowed("Possible spelling mistake"),
-                issue_type: Cow::Borrowed("misspelling"),
+                id: rule_id.to_string(),
+                description: "Possible spelling mistake".to_string(),
+                issue_type: "misspelling".to_string(),
                 category: Category {
-                    id: Cow::Owned(category_id.to_string()),
-                    name: Cow::Borrowed("Possible Typo"),
+                    id: category_id.to_string(),
+                    name: "Possible Typo".to_string(),
                 },
             },
             ignore_for_incomplete_sentence: false,
@@ -314,26 +308,6 @@ async fn update_colors_takes_effect_immediately() {
     client.set_colors(vec![("RULE:RULE_X".to_string(), "#ff0001".to_string())]);
     let recommendations = client.get_recommendation("text").await.unwrap();
     assert_eq!(recommendations[0].color, "#ff0001");
-}
-
-#[test]
-fn normalize_address_keeps_and_adds_schemes() {
-    assert_eq!(
-        LanguageToolClient::normalize_address(" http://localhost:2689/ "),
-        "http://localhost:2689"
-    );
-    assert_eq!(
-        LanguageToolClient::normalize_address("localhost:2689//"),
-        "http://localhost:2689"
-    );
-    assert_eq!(
-        LanguageToolClient::normalize_address("https://lt.example.com"),
-        "https://lt.example.com"
-    );
-    assert_eq!(
-        LanguageToolClient::normalize_address("unix:"),
-        "http://unix:"
-    );
 }
 
 #[test]

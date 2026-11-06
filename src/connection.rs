@@ -77,11 +77,13 @@ fn spawning_allowed() -> bool {
 /// `cargo build --workspace` puts them side by side in `build/target/*`).
 fn daemon_binary() -> Option<std::path::PathBuf> {
     rhesis_platform::process::exe_dir().map(|dir| {
-        dir.join(if cfg!(windows) {
+        let filename = if cfg!(windows) {
             "rhesis-service.exe"
         } else {
             "rhesis-service"
-        })
+        };
+
+        dir.join(filename)
     })
 }
 
@@ -95,11 +97,7 @@ fn spawn_daemon() {
     match daemon_binary() {
         Some(binary) => {
             if let Err(e) = rhesis_platform::process::spawn_detached(binary) {
-                log::warn!(
-                    "cannot respawn the Rhesis service daemon ({e}); \
-                     rerunning 'cargo build --workspace' (dev) or reinstalling (packaged) \
-                     fixes a missing binary"
-                );
+                log::warn!("cannot respawn the Rhesis service daemon ({e})");
             }
         }
         None => log::warn!("cannot respawn the Rhesis service daemon: no executable directory"),

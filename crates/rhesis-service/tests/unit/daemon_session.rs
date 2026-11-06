@@ -1,16 +1,3 @@
-//! Daemon-session tier (Refactor.md §7): the whole daemon runs in-process
-//! on real local sockets — handshake, snapshot replay, single-client gate,
-//! settings persistence through the owned store, the idle-grace and
-//! shutdown exits, and slot handback between sessions.
-//!
-//! Nothing here touches the user's machine configuration: every
-//! `DaemonOptions` pins the store into a per-test sandbox and points the
-//! legacy-INI input at a file that does not exist in it (the real
-//! `~/.config/rhesis/service.json` and `Rhesis.conf` are never consulted).
-//! The worker runs against the recorded fixture provider
-//! (`RHESIS_FAKE_LT=checker`), so no LanguageTool installation or JVM is
-//! ever spawned and every status transition is fast.
-
 use std::{
     io::ErrorKind,
     path::PathBuf,

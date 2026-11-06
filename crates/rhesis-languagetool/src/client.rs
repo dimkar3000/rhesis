@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use crate::{
+    helpers::{normalize_address, ColorRules},
     models::LanguageToolDto,
     recommendation::{Range, Recommendation},
 };
@@ -8,35 +7,23 @@ use crate::{
 #[derive(Default)]
 pub struct LanguageToolClient {
     address: String,
-    rules: HashMap<String, String>,
+    rules: ColorRules,
 }
 
 impl LanguageToolClient {
     pub fn new<T: AsRef<str>>(base_url: T) -> LanguageToolClient {
         Self {
-            address: Self::normalize_address(base_url.as_ref()),
+            address: crate::helpers::normalize_address(base_url.as_ref()),
             ..Default::default()
         }
     }
 
-    /// Point the client at a new server base URL (`http://localhost:2689`,
-    /// `https://lt.example.com`, ...). Bare addresses get the `http://` scheme.
     pub fn update_address<T: AsRef<str>>(&mut self, base_url: T) {
-        self.address = Self::normalize_address(base_url.as_ref());
+        self.address = normalize_address(base_url.as_ref());
     }
 
     pub fn address(&self) -> &str {
         &self.address
-    }
-
-    /// reqwest needs a full URL; bare addresses get the http:// scheme
-    pub fn normalize_address(address: &str) -> String {
-        let address = address.trim().trim_end_matches('/');
-        if address.contains("://") {
-            address.to_string()
-        } else {
-            format!("http://{address}")
-        }
     }
 
     /// Lightweight readiness probe: true when the server answers `POST /v2/check`.
@@ -65,15 +52,10 @@ impl LanguageToolClient {
             Err(_) => false,
         }
     }
-}
 
-impl LanguageToolClient {
     pub fn set_colors(&mut self, rules: Vec<(String, String)>) {
         log::debug!("applying {} color rules", rules.len());
-        self.rules.clear();
-        for (key, value) in rules {
-            self.rules.insert(key, value);
-        }
+        self.rules = ColorRules::from_wire(rules);
     }
 
     pub async fn get_recommendation(
@@ -125,57 +107,36 @@ impl LanguageToolClient {
 /// Convert a LanguageTool response body into UI recommendations using the
 /// given color rules. Shared by the live client (HTTP answers) and the fake
 /// provider (recorded fixtures), so fixtures carry the real conversion.
-pub(crate) fn map_dto(
-    body: LanguageToolDto,
-    rules: &HashMap<String, String>,
-) -> Vec<Recommendation> {
-    let lang_tag = body.language.code.to_uppercase();
-    let recommendations = body
-        .matches
-        .into_iter()
-        .flat_map(|x| {
-            let lang_tag = lang_tag.clone();
-            x.replacements
-                .into_iter()
-                .map(move |replacement| Recommendation {
-                    color: select_color(
-                        rules,
-                        x.rule.id.as_ref().to_string(),
-                        x.rule.category.id.as_ref().to_string(),
-                    ),
-                    range: Range {
-                        start: x.offset,
-                        length: x.length,
-                    },
-                    value: replacement.value.as_ref().to_string(),
-                    category_id: x.rule.category.id.as_ref().to_string(),
-                    rule_id: x.rule.id.as_ref().to_string(),
-                    tooltip: x.message.as_ref().to_string(),
-                    language: lang_tag.clone(),
-                })
-        })
-        .collect::<Vec<_>>();
+pub(crate) fn map_dto(body: LanguageToolDto, rules: &ColorRules) -> Vec<Recommendation> {
+    const DEFAULT_COLOR: &str = "#FF0000";
 
+    let language = body.language.code.to_uppercase();
+    let mut recommendations = Vec::new();
+    for x in body.matches {
+        // Per match (independent of replacements): look the color up
+        // once and move the DTO's own strings out — no re-copies.
+        let color = rules
+            .color(&x.rule.id, &x.rule.category.id)
+            .unwrap_or(DEFAULT_COLOR)
+            .to_owned();
+        let rule_id = x.rule.id;
+        let category_id = x.rule.category.id;
+        let tooltip = x.message;
+        let range = Range {
+            start: x.offset,
+            length: x.length,
+        };
+        for replacement in x.replacements {
+            recommendations.push(Recommendation {
+                color: color.clone(),
+                range,
+                value: replacement.value,
+                category_id: category_id.clone(),
+                rule_id: rule_id.clone(),
+                tooltip: tooltip.clone(),
+                language: language.clone(),
+            });
+        }
+    }
     recommendations
-}
-
-fn select_color(rules: &HashMap<String, String>, rule_id: String, category_id: String) -> String {
-    let mut color = "#FF0000".to_string();
-
-    let category_key = format!("CATEGORY:{}", category_id);
-    if rules.contains_key(&category_key) {
-        color = rules[&category_key].clone();
-    }
-
-    let rule_key = format!("RULE:{}", rule_id);
-    if rules.contains_key(&rule_key) {
-        color = rules[&rule_key].clone();
-    }
-
-    log::debug!("Color Selected: {}", color);
-    log::debug!("Category: {}", category_key);
-    log::debug!("Rule: {}", rule_key);
-    log::debug!("Rules: {:?}", rules);
-
-    color
 }
