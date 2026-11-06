@@ -10,24 +10,15 @@ use lazy_static::lazy_static;
 use std::env;
 
 use rhesis::connection;
+use rhesis::constants::{DEFAULT_QUICK_STYLE, ROOT_QML_SOURCE};
 use rhesis::interop::bridge;
 use rhesis_platform::autostart;
+use rhesis_platform::constants::{APP_ID, HIDDEN_FLAG};
 use rhesis_platform::resources::translations_dir;
 use rhesis_platform::single_instance;
 
-// Windows has its own Kirigami-free QML (see build.rs).
-#[cfg(windows)]
-const ROOT_QML_SOURCE: &str = "src/interop/qml/windows/Root.qml";
-#[cfg(not(windows))]
-const ROOT_QML_SOURCE: &str = "src/interop/qml/Root.qml";
-
-#[cfg(windows)]
-const DEFAULT_QUICK_STYLE: &str = "FluentWinUI3";
-#[cfg(not(windows))]
-const DEFAULT_QUICK_STYLE: &str = "org.kde.desktop";
-
 lazy_static! {
-    static ref NAMESPACE: QString = QString::from("io.github.dimkar3000.rhesis");
+    static ref NAMESPACE: QString = QString::from(APP_ID);
     static ref ROOT_QML_FILE_PATH: QUrl = QUrl::from(&format!(
         "qrc:/qt/qml/{}/{}",
         NAMESPACE.to_string().replace(".", "/"),
@@ -140,7 +131,7 @@ fn run_ui() {
     // It stays as the guard for other paths and for top-levels that end
     // up visible anyway (helper.h refuses to hide when no tray exists —
     // a hidden window without a reopen path must stay visible instead).
-    if env::args().any(|arg| arg == "--hidden") {
+    if env::args().any(|arg| arg == HIDDEN_FLAG) {
         bridge::ffi::appHideRootWindow();
     }
 

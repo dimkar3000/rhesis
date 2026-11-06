@@ -1,4 +1,5 @@
 use crate::{
+    constants::{CHECK_PATH, DEFAULT_MATCH_COLOR},
     helpers::{normalize_address, ColorRules},
     models::LanguageToolDto,
     recommendation::{Range, Recommendation},
@@ -43,7 +44,7 @@ impl LanguageToolClient {
         ];
 
         match client
-            .post(format!("{}/v2/check", self.address))
+            .post(format!("{}/{}", self.address, CHECK_PATH))
             .form(&form_data)
             .send()
             .await
@@ -73,7 +74,7 @@ impl LanguageToolClient {
         ];
 
         let response = client
-            .post(format!("{}/v2/check", self.address))
+            .post(format!("{}/{}", self.address, CHECK_PATH))
             .form(&form_data)
             .send()
             .await;
@@ -108,8 +109,6 @@ impl LanguageToolClient {
 /// given color rules. Shared by the live client (HTTP answers) and the fake
 /// provider (recorded fixtures), so fixtures carry the real conversion.
 pub(crate) fn map_dto(body: LanguageToolDto, rules: &ColorRules) -> Vec<Recommendation> {
-    const DEFAULT_COLOR: &str = "#FF0000";
-
     let language = body.language.code.to_uppercase();
     let mut recommendations = Vec::new();
     for x in body.matches {
@@ -117,7 +116,7 @@ pub(crate) fn map_dto(body: LanguageToolDto, rules: &ColorRules) -> Vec<Recommen
         // once and move the DTO's own strings out — no re-copies.
         let color = rules
             .color(&x.rule.id, &x.rule.category.id)
-            .unwrap_or(DEFAULT_COLOR)
+            .unwrap_or(DEFAULT_MATCH_COLOR)
             .to_owned();
         let rule_id = x.rule.id;
         let category_id = x.rule.category.id;

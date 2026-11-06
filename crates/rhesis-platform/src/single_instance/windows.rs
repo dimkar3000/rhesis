@@ -22,8 +22,7 @@ use windows_sys::Win32::{
     System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE},
 };
 
-const MUTEX_NAME: &str = r"Local\io.github.dimkar3000.rhesis.instance";
-const EVENT_NAME: &str = r"Local\io.github.dimkar3000.rhesis.show";
+use crate::constants::{EVENT_NAME, MUTEX_NAME};
 
 struct OwnedHandle(HANDLE);
 

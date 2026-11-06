@@ -7,7 +7,10 @@ use std::{
 };
 
 use crate::{
-    client::LanguageToolClient, helpers::ColorRules, models::LanguageToolDto,
+    client::LanguageToolClient,
+    constants::{FAKE_LT_ENV, FIXTURE_DIR},
+    helpers::ColorRules,
+    models::LanguageToolDto,
     recommendation::Recommendation,
 };
 
@@ -38,7 +41,7 @@ impl CompletionProvider {
     /// installation. A fixture that fails to load falls back to the live
     /// client with a warning, so a broken harness never breaks a real boot.
     pub(crate) fn new(base_address: &str) -> Self {
-        match std::env::var_os("RHESIS_FAKE_LT") {
+        match std::env::var_os(FAKE_LT_ENV) {
             Some(id) => match FakeProvider::from_fixture(&id.to_string_lossy()) {
                 Ok(fake) => {
                     log::info!("using the recorded fake provider fixture {id:?}");
@@ -135,7 +138,7 @@ impl FakeProvider {
     /// so fixtures carry the real DTO → [`Recommendation`] conversion.
     fn from_fixture(id: &str) -> Result<FakeProvider, String> {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/lt")
+            .join(FIXTURE_DIR)
             .join(format!("{id}.json"));
         let raw = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read fixture {}: {e}", path.display()))?;

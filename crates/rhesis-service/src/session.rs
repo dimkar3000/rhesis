@@ -23,7 +23,8 @@ use crossbeam::channel::{unbounded, Receiver, Sender};
 use interprocess::{local_socket::Stream, TryClone};
 
 use rhesis_languagetool::service::{LanguageToolWorkerEvent, Message};
-use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Settings, PROTOCOL};
+use rhesis_protocol::constants::PROTOCOL;
+use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Settings};
 
 use crate::{
     config::worker_events,

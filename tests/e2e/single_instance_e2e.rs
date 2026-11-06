@@ -30,9 +30,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Socket name copied from single_instance.rs (its constant is private to
-/// that module — the test reads the same address the guard binds).
-const SOCKET_NAME: &[u8] = b"io.github.dimkar3000.rhesis";
+use rhesis_platform::constants::SOCKET_NAME;
 
 /// How long each observable step may take: the primary must offer its
 /// guard socket quickly, the secondary must stand down without a UI, and

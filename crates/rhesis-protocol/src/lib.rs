@@ -8,44 +8,28 @@
 //!
 //! Framing per Refactor.md §3: `[u32 LE length][postcard payload]`, with a
 //! shared frame cap. postcard is non-self-describing, so the `Hello`
-//! handshake carrying [`PROTOCOL`] is versioning load-bearing: a mismatch is
-//! answered before any schema-sensitive data flows (the client shuts the
-//! stale daemon down and respawns its own-install copy instead).
+//! handshake carrying [`constants::PROTOCOL`] is versioning load-bearing: a
+//! mismatch is answered before any schema-sensitive data flows (the client
+//! shuts the stale daemon down and respawns its own-install copy instead).
 //!
 //! Rules to keep the schema stable:
-//! - any change in the types or enum shapes bumps [`PROTOCOL`] (starts at 1);
+//! - any change in the types or enum shapes bumps [`constants::PROTOCOL`]
+//!   (starts at 1);
 //! - every message variant has a round-trip test (the drift tripwire);
 //! - plain enums only: variant discriminants on the wire, no `#[serde(tag)]`.
 
+pub mod constants;
+
+use crate::constants::{DEFAULT_PORT, FRAME_CAP};
 use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-/// Wire format version, sent first in both directions via the `Hello` frames.
-/// A mismatch means the peers disagree about this module's types at compile
-/// time (e.g. a pre-upgrade daemon still lingering in its idle grace).
-pub const PROTOCOL: u32 = 1;
-
-/// Socket the daemon binds: the abstract-namespace UDS name on Linux
-/// (Flatpak ↔ host share the network namespace) and the same-named pipe on
-/// Windows, resolved by the `interprocess` layer.
-pub const SERVICE_SOCKET_NAME: &str = "io.github.dimkar3000.rhesis.service";
-
-/// Maximum postcard payload length per frame, enforced on both sides before
-/// any allocation or read. Ceiling chosen far above the biggest realistic
-/// payload (a full text document + its suggestions) so only protocol abuse
-/// or bugs ever hit it.
-pub const FRAME_CAP: usize = 16 * 1024 * 1024;
-
-/// Status code the *client* reports locally when no daemon session exists
-/// (QML's `server_status`). Never encoded on the wire: the wire only ever
-/// carries the six daemon-reported [`WorkerStatus`] states.
-pub const CLIENT_STATUS_DISCONNECTED: i32 = 6;
-
 /// Deterministic socket name for in-process test tiers (real daemon/session
-/// code, tier-unique name). Production always uses [`SERVICE_SOCKET_NAME`];
-/// the pid suffix keeps parallel test binaries from colliding on one name.
+/// code, tier-unique name). Production always uses
+/// [`constants::SERVICE_SOCKET_NAME`]; the pid suffix keeps parallel test
+/// binaries from colliding on one name.
 pub fn tier_socket_name(tier: &str) -> String {
     format!("{tier}-{}", std::process::id())
 }
@@ -98,17 +82,13 @@ impl Default for Settings {
     }
 }
 
-/// Factory port for the embedded LanguageTool server (also the Windows
-/// installer's and the tray UI's fallback).
-pub const DEFAULT_PORT: u16 = 2689;
-
 /// Lifecycle of the LanguageTool server connection, as the worker reports
 /// it. Moved verbatim from the worker crate: one definition for the wire,
 /// the daemon's session pump and the client's status mirror.
 ///
 /// QML status codes (see [`WorkerStatus::code`]): 0–5 here; the client-local
-/// "no session" state maps to [`CLIENT_STATUS_DISCONNECTED`] (6) and never
-/// appears on the wire.
+/// "no session" state maps to [`constants::CLIENT_STATUS_DISCONNECTED`] (6)
+/// and never appears on the wire.
 #[derive(Debug, Clone, PartialEq, Default, Eq, Serialize, Deserialize)]
 pub enum WorkerStatus {
     #[default]

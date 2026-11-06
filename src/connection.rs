@@ -24,37 +24,12 @@ use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName as _};
 use interprocess::TryClone as _;
 
+use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
 use rhesis_protocol::{
-    read_frame, write_frame, ClientMsg, DaemonMsg, FrameError, Settings, PROTOCOL,
-    SERVICE_SOCKET_NAME,
+    read_frame, write_frame, ClientMsg, DaemonMsg, FrameError, Settings,
 };
 
-/// First reconnect wait; doubles on every failed attempt.
-const RETRY_CHUNK: Duration = Duration::from_millis(50);
-
-/// Upper bound of the reconnect backoff: while the daemon is absent, the
-/// handshake retries at this cadence at most (§5: "handshake retry
-/// 50 ms → 2 s cap").
-const RETRY_MAX: Duration = Duration::from_millis(2000);
-
-/// Minimum interval between two detached spawn attempts. A broken daemon
-/// that dies at bind would otherwise turn the reconnect loop into an exec
-/// loop; this keeps the worst case to one spawn per interval.
-const SPAWN_INTERVAL: Duration = Duration::from_millis(2000);
-
-/// Total boot-probe budget: connect-or-spawn must finish well before the
-/// user notices anything; first-run daemon bind + a settings store load
-/// take milliseconds, so `None` past the budget means real trouble.
-const BOOT_BUDGET: Duration = Duration::from_secs(2);
-
-/// Pace of both the boot-probe retries (while waiting for a spawned
-/// daemon to bind) and the disconnect-wait alarm tick (see [RETRY_CHUNK]).
-const PROBE_SLICE: Duration = RETRY_CHUNK;
-
-/// How long a boot replay read may block before the probe bails. The
-/// replay is deterministic (Settings + Status right after the greeting),
-/// so hitting this means a wedged peer — boot on defaults instead.
-const REPLY_CAP: Duration = Duration::from_secs(1);
+use crate::constants::*;
 
 /// Socket name: the production name, or the `RHESIS_SERVICE_SOCKET` tier
 /// override (shared with the daemon's `DaemonOptions::production()`).
@@ -309,7 +284,7 @@ pub fn boot_snapshot() -> Option<Settings> {
     while Instant::now() < deadline {
         match handshake(&socket) {
             Ok(HandshakeOutcome::Session(stream)) => {
-                if let Some(settings) = read_replay(stream, REPLY_CAP) {
+                if let Some(settings) = read_replay(stream, BOOT_REPLAY_CAP) {
                     log::info!(
                         "boot snapshot acquired{}",
                         if spawned {

@@ -31,12 +31,7 @@ use std::{
     thread::JoinHandle,
 };
 
-/// Reserved-only app id: doubles as the abstract socket name, which stays
-/// well below the 107-byte socket address limit.
-pub const SOCKET_NAME: &[u8] = b"io.github.dimkar3000.rhesis";
-
-/// Payload a secondary instance sends to the primary one.
-pub const SHOW_REQUEST: &[u8] = b"show\n";
+use crate::constants::{SHOW_REQUEST, SOCKET_NAME};
 
 /// Bound while acquiring, consumed by `spawn_runner` afterwards: the listener
 /// has to come up before any UI does (a second launch happening during the

@@ -18,18 +18,11 @@ use std::path::Path;
 #[cfg(not(windows))]
 use std::path::{Path, PathBuf};
 
-/// Flatpak application id: also doubles as the desktop entry name, which is
-/// what makes XDG autostart entries idempotent across package flavors.
 #[cfg(not(windows))]
-const APP_ID: &str = "io.github.dimkar3000.rhesis";
-
-/// CLI flag launching into the tray without flashing the window; ignored
-/// when background hosting is disabled (helper.h keeps the window visible
-/// so the app can never strand itself without a tray icon).
-const HIDDEN_FLAG: &str = "--hidden";
-
-/// Descriptive error for the QML toggle; details are logged where they occur.
-const SET_ERROR_MESSAGE: &str = "could not write the autostart entry";
+use crate::constants::APP_ID;
+use crate::constants::{HIDDEN_FLAG, SET_ERROR_MESSAGE};
+#[cfg(windows)]
+use crate::constants::{RUN_KEY, RUN_VALUE};
 
 #[cfg(not(windows))]
 fn autostart_dir() -> Option<PathBuf> {
@@ -258,11 +251,6 @@ pub fn set_enabled(enable: bool) -> Result<(), &'static str> {
 // Windows: the per-user Run key. The value name is the product name; the data
 // is the quoted executable plus `--hidden`, so a login launch lands in the
 // tray like the Linux desktop entry does (see Root.qml's hidden-launch gate).
-#[cfg(windows)]
-const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-#[cfg(windows)]
-const RUN_VALUE: &str = "Rhesis";
-
 #[cfg(windows)]
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()

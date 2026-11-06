@@ -24,7 +24,6 @@
 //! binary never touches this module. Qt-free, no QuickTest, offline.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use interprocess::local_socket::traits::Listener as _;
 use interprocess::local_socket::{
@@ -32,13 +31,10 @@ use interprocess::local_socket::{
 };
 use interprocess::TryClone as _;
 
-use rhesis_protocol::{
-    read_frame, write_frame, ClientMsg, DaemonMsg, Recommendation, Settings, WorkerStatus, PROTOCOL,
-};
+use rhesis_protocol::constants::PROTOCOL;
+use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Recommendation, Settings, WorkerStatus};
 
-/// Poll slice of the accept loop: same shape as the real daemon's
-/// ACCEPT_SLICE — a connect is answered within one slice.
-const ACCEPT_SLICE: Duration = Duration::from_millis(50);
+use crate::constants::*;
 
 /// The settings the fixture boots with: §-conform defaults, background off
 /// (a suite's `Drop` path never keeps this daemon running).
@@ -52,17 +48,6 @@ fn fixture_settings() -> Settings {
 fn fixture_boot_status() -> WorkerStatus {
     WorkerStatus::Started
 }
-/// The checker fixture: the same three recommendations recorded in
-/// `tests/fixtures/lt/checker.json` and asserted by the daemon-session
-/// tier (HE_LIKE suggestion pair at [4, 8), MORFOLOGIK at [38, 44)).
-const FIXTURE_TEXT: &str = "She like football and play the guitar quicly.";
-
-const FIXTURE_LIKE_FIRST: &str = "is like";
-const FIXTURE_LIKE_SECOND: &str = "likes";
-const FIXTURE_QUICKLY: &str = "quickly";
-const FIXTURE_GRAMMAR_TOOLTIP: &str =
-    "The pronoun 'She' requires a third-person verb or a past tense. Or did you forget to add a verb?";
-const FIXTURE_SPELL_TOOLTIP: &str = "Possible spelling mistake found.";
 
 fn fixture_recommendations() -> Vec<Recommendation> {
     let grammar = |value: &str| Recommendation {
@@ -180,7 +165,7 @@ fn run(socket_name: &str) {
                 drop(handle); // detached: the accept loop keeps serving
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(ACCEPT_SLICE);
+                std::thread::sleep(FAKE_ACCEPT_SLICE);
             }
             Err(_) => {
                 eprintln!("fake daemon: listener failed");

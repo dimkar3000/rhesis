@@ -8,5 +8,6 @@
 //! ignored) and every failure degrades to defaults with a log line, never a
 //! panic: the daemon must boot to serve text checks even with a broken file.
 
+pub mod constants;
 pub mod ini;
 pub mod store;

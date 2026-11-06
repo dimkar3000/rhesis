@@ -20,6 +20,8 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
 
+use crate::constants::{DEFAULT_FAKE_FIXTURE, TEST_ID};
+
 extern "C" {
     fn rhesis_quick_test_main(
         argc: c_int,
@@ -34,14 +36,6 @@ extern "C" {
 fn suite_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui")
 }
-
-/// Runner process name and Quick Test suite id, reported in the output
-/// banner (`********* Start testing of rhesis-ui-tests *********`).
-const TEST_ID: &str = "rhesis-ui-tests";
-
-/// Fixture id served to worker requests when the caller did not pick one
-/// (`RHESIS_FAKE_LT=<id>` overridable, see `CompletionProvider::chosen`).
-const DEFAULT_FAKE_FIXTURE: &str = "checker";
 
 /// The sandbox lives inside the build frame so `cargo clean`-adjacent churn
 /// never pollutes a real user configuration, and failing runs leave their

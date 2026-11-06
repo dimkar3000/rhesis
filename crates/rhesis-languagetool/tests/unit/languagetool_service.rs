@@ -14,9 +14,9 @@ use std::{
 };
 
 use crossbeam::channel::RecvTimeoutError;
+use rhesis_languagetool::constants::MAX_START_FAILURES;
 use rhesis_languagetool::service::{
     LanguageToolWorker, LanguageToolWorkerEvent, Message, Suggestion, WorkerHandles, WorkerStatus,
-    MAX_START_FAILURES,
 };
 
 // Note: the `ensure_server_properties` tests were moved back to

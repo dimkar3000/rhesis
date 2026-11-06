@@ -6,8 +6,9 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
+use rhesis_protocol::constants::{FRAME_CAP, PROTOCOL};
 use rhesis_protocol::{
-    ClientMsg, DaemonMsg, Range, Recommendation, Settings, WorkerStatus, FRAME_CAP, PROTOCOL,
+    ClientMsg, DaemonMsg, Range, Recommendation, Settings, WorkerStatus,
 };
 
 /// Helper: encode a message and read it back through the public framing API.
@@ -32,7 +33,7 @@ fn tier_socket_names_are_pid_unique() {
     let name = rhesis_protocol::tier_socket_name("daemon-session");
     assert_ne!(
         name,
-        rhesis_protocol::SERVICE_SOCKET_NAME,
+        rhesis_protocol::constants::SERVICE_SOCKET_NAME,
         "test names must never shadow the production socket"
     );
     assert!(

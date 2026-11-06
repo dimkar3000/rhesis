@@ -10,18 +10,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::constants::{FASTTEXT_LAYOUTS, MAX_START_FAILURES};
 use crate::{completion_provider::CompletionProvider, recommendation::Recommendation};
 use crossbeam::channel::{after, unbounded, Receiver, Sender};
-
-/// How many consecutive start attempts may fail before the worker gives up
-/// and latches into `Failed`. Reset by `Stop`, `SetPort` and `Retry`.
-pub const MAX_START_FAILURES: u32 = 3;
 
 /// Lifecycle status of the LanguageTool server connection: the single
 /// definition lives in `rhesis-protocol` (the wire type the daemon pushes);
 /// re-exported here so `rhesis_languagetool::service::WorkerStatus` paths
 /// keep working.
 pub use rhesis_protocol::WorkerStatus;
+use rhesis_protocol::constants::DEFAULT_PORT;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -121,7 +119,7 @@ impl Default for LanguageToolWorker {
             status: WorkerStatus::Stopped,
             consecutive_failures: 0,
             startup_timeout: Duration::from_secs(60),
-            local_port: 2689,
+            local_port: DEFAULT_PORT,
             local_server_handle: None,
         }
     }
@@ -942,15 +940,6 @@ impl LanguageToolWorker {
         }
     }
 
-    /// (fasttext model, fasttext binary) locations relative to the
-    /// LanguageTool dir, covering every layout that does not already ship a
-    /// server.properties: dev artifacts (setup.sh), desktop payloads, Flatpak.
-    const FASTTEXT_LAYOUTS: &'static [(&'static str, &'static str)] = &[
-        ("../lid.176.ftz", "../fastText/fasttext"),
-        ("../lid.176.ftz", "../bin/fasttext"),
-        ("../lid.176.ftz", "../../bin/fasttext"),
-    ];
-
     /// Recreate a missing server.properties from the surrounding layout so a
     /// lost config fails open instead of killing startup with a bare exit
     /// status. Never overwrites an existing file.
@@ -959,7 +948,7 @@ impl LanguageToolWorker {
         if props.is_file() {
             return;
         }
-        for (model, binary) in Self::FASTTEXT_LAYOUTS {
+        for (model, binary) in FASTTEXT_LAYOUTS {
             if lt_dir.join(model).is_file() && lt_dir.join(binary).is_file() {
                 let contents = format!("fasttextModel={model}\nfasttextBinary={binary}\n");
                 match std::fs::write(&props, &contents) {

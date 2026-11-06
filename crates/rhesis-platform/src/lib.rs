@@ -7,6 +7,7 @@
 //! Windows job-object custody for child processes is a no-op everywhere else.
 
 pub mod autostart;
+pub mod constants;
 pub mod paths;
 pub mod process;
 pub mod resources;

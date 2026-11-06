@@ -8,9 +8,10 @@ use std::{
 
 use interprocess::local_socket::{traits::Stream as _, GenericNamespaced, Stream, ToNsName as _};
 
+use rhesis_protocol::constants::PROTOCOL;
 use rhesis_protocol::{
     read_frame, tier_socket_name, write_frame, ClientMsg, DaemonMsg, Range, Recommendation,
-    Settings, WorkerStatus, PROTOCOL,
+    Settings, WorkerStatus,
 };
 use rhesis_service::{config::worker_events, DaemonOptions};
 
@@ -275,14 +276,27 @@ impl Client {
         }
     }
 
-    /// The two fixed handshake frames, then the current status.
+    /// The fixed handshake frame, polled like `open_session_with_retry`:
+    /// a single recv slice can slip under load before the daemon thread
+    /// gets scheduled, so `None` ("no frame yet") keeps polling until the
+    /// shared deadline instead of failing the handshake.
     fn expect_hello(&mut self, busy: bool) {
-        match self.read(SLICE) {
-            Some(DaemonMsg::Hello { protocol, busy: b }) => {
-                assert_eq!(protocol, PROTOCOL);
-                assert_eq!(b, busy, "Busy flag");
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            match self.read(SLICE) {
+                Some(DaemonMsg::Hello { protocol, busy: b }) => {
+                    assert_eq!(protocol, PROTOCOL);
+                    assert_eq!(b, busy, "Busy flag");
+                    return;
+                }
+                // None: no handshake frame yet, keep polling.
+                None => {}
+                other => panic!("expected Hello (busy={busy}), got {other:?}"),
             }
-            other => panic!("expected Hello (busy={busy}), got {other:?}"),
+            assert!(
+                Instant::now() < deadline,
+                "the daemon never answered the handshake"
+            );
         }
     }
 
@@ -458,7 +472,7 @@ fn set_port_round_trips_persist_and_worker() {
     let mut client = open_session(&pod.socket_name);
     client.expect_hello(false);
     let base = client.expect_settings();
-    assert_eq!(base.port, rhesis_protocol::DEFAULT_PORT);
+    assert_eq!(base.port, rhesis_protocol::constants::DEFAULT_PORT);
 
     client.send(&ClientMsg::SetPort(7777));
     assert_eq!(
