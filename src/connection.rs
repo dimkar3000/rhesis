@@ -25,9 +25,7 @@ use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName as _};
 use interprocess::TryClone as _;
 
 use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
-use rhesis_protocol::{
-    read_frame, write_frame, ClientMsg, DaemonMsg, FrameError, Settings,
-};
+use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, FrameError, Settings};
 
 use crate::constants::*;
 

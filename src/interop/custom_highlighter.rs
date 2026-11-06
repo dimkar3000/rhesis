@@ -5,7 +5,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QMap, QMapPair_QString_QVariant, QString, QVariant};
 
 use rhesis_protocol::{
-    DaemonMsg, Recommendation, Settings, WorkerStatus, CLIENT_STATUS_DISCONNECTED,
+    constants::CLIENT_STATUS_DISCONNECTED, DaemonMsg, Recommendation, Settings, WorkerStatus,
 };
 
 use crate::connection::{Connection, ConnectionEvent};

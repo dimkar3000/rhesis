@@ -32,7 +32,9 @@ use interprocess::local_socket::{
 use interprocess::TryClone as _;
 
 use rhesis_protocol::constants::PROTOCOL;
-use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Recommendation, Settings, WorkerStatus};
+use rhesis_protocol::{
+    read_frame, write_frame, ClientMsg, DaemonMsg, Recommendation, Settings, WorkerStatus,
+};
 
 use crate::constants::*;
 

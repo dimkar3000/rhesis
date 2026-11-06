@@ -225,7 +225,8 @@ use std::pin::Pin;
 use crate::connection::Command;
 use crate::interop::async_messaging_helper::{color_settings_to_variant, variant_to_settings};
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
-use rhesis_protocol::{Settings, DEFAULT_PORT};
+use rhesis_protocol::constants::DEFAULT_PORT;
+use rhesis_protocol::Settings;
 
 /// The Qt-facing glue for the mirror object (its pure-information side —
 /// qproperty fields, snapshot parsing, [`Drop`] — lives in
