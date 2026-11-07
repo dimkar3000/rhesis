@@ -140,10 +140,9 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     // The env pin freezes spawning: the steady-state client (and the boot
     // probe) connects to THIS fixture and never execs a detached binary.
     rhesis::fake_daemon::spawn();
-    // Kept for parity with the embedded-record provider selection; harmless
-    // in the daemon architecture because nothing in this process owns a
-    // worker.
-    common::seed_fake_provider();
+    // The boot stays hermetic without extra seeding: the socket pin above
+    // means nothing in this process spawns a daemon, and the fixture
+    // daemon answers every check itself.
     env_logger::init();
 
     // ---------------------------------------------------------------------

@@ -3,8 +3,8 @@
 //! Quick Test owns `QGuiApplication` and parses its own command line, so it
 //! cannot share a process with the Rust test harness: this target launches
 //! `rhesis-ui-runner` (a one-line shim over `rhesis::ui_tests::run_suites`)
-//! and asserts its exit code. The runner keeps itself hermetic — it seeds
-//! `RHESIS_FAKE_LT` and redirects every XDG home into
+//! and asserts its exit code. The runner keeps itself hermetic — it starts
+//! the in-process fixture daemon and redirects every XDG home into
 //! `build/ui-tests/harness-env` before Qt starts — so the child needs no
 //! setup from here beyond a platform plugin that can render offscreen.
 //!

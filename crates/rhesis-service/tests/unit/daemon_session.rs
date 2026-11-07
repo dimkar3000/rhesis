@@ -15,7 +15,9 @@ use rhesis_protocol::{
 };
 use rhesis_service::{config::worker_events, DaemonOptions};
 
-/// The recorded fixture provider id (see rhesis-languagetool fixtures).
+/// The recorded fixture id the in-process daemons run against (see
+/// rhesis-languagetool fixtures); set straight on `DaemonOptions`, so no
+/// environment is touched.
 const FAKE_LT: &str = "checker";
 /// Text with a recorded two-match answer in the checker fixture.
 const FIXTURE_TEXT: &str = "She like football and play the guitar quicly.";
@@ -84,10 +86,6 @@ fn sandbox(name: &str) -> PathBuf {
     dir
 }
 
-fn seed_fake_provider() {
-    std::env::set_var("RHESIS_FAKE_LT", FAKE_LT);
-}
-
 /// One in-process daemon run: sandbox-pinned options and a handle on the
 /// outcome, so tests can assert the exit path.
 struct DaemonPod {
@@ -99,7 +97,6 @@ struct DaemonPod {
 
 impl DaemonPod {
     fn start(name: &str, grace: Duration, seed: Option<Settings>) -> Self {
-        seed_fake_provider();
         let socket_name = tier_socket_name(name);
         let sandbox = sandbox(name);
         let store_path = sandbox.join("service.json");
@@ -117,6 +114,8 @@ impl DaemonPod {
             // user configuration.
             ini_path: Some(sandbox.join("no-such-qsettings.conf")),
             idle_grace: grace,
+            // The fake provider comes through the options now; no environment.
+            fake_fixture: Some(FAKE_LT.to_string()),
         };
         let result = Arc::new(Mutex::new(None));
         let slot = result.clone();

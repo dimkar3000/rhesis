@@ -3,8 +3,11 @@
 
 pub mod client;
 pub mod constants;
-pub mod models;
+pub mod dto;
 pub mod service;
+pub mod worker;
 
+mod color_rules;
 mod completion_provider;
+mod fake_provider;
 mod helpers;

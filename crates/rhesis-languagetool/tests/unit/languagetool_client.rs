@@ -4,77 +4,76 @@ use std::{
     thread,
 };
 
-use rhesis_languagetool::{
-    client::LanguageToolClient,
-    models::{
-        Category, Context, Language, LanguageDetectedLanguage, LanguageToolDto, Match, Replacement,
-        Rule, Software, Type, Warnings,
-    },
-};
+use rhesis_languagetool::client::LanguageToolClient;
 use rhesis_protocol::{Range, Recommendation};
 
-/// Builds a minimal LanguageTool response with a single match
-fn make_dto(rule_id: &str, category_id: &str, offset: i32, length: i32) -> LanguageToolDto {
-    LanguageToolDto {
-        software: Software {
-            name: "LanguageTool".to_string(),
-            version: "test".to_string(),
-            build_date: "".to_string(),
-            api_version: 1,
-            premium: false,
-            premium_hint: "".to_string(),
-            status: "".to_string(),
+/// Builds a full LanguageTool `/v2/check` response body in exactly the
+/// JSON shape a real server sends — unmodeled sections (`software`,
+/// `warnings`, the sentence ranges) and per-match extras (`shortMessage`,
+/// `context`, `sentence`, `type`, ...) included — so the tier parses live
+/// shapes, not echoes of our own structs. One match, two replacements:
+/// the converter must turn it into two recommendations.
+fn response_body(rule_id: &str, category_id: &str, offset: i32, length: i32) -> Vec<u8> {
+    let response = serde_json::json!({
+        "software": {
+            "name": "LanguageTool",
+            "version": "6.9-SNAPSHOT",
+            "buildDate": "2026-08-06",
+            "apiVersion": 1,
+            "premium": false,
+            "premiumHint": "",
+            "status": ""
         },
-        warnings: Warnings {
-            incomplete_results: false,
+        "warnings": { "incompleteResults": false },
+        "language": {
+            "name": "English (US)",
+            "code": "en-US",
+            "detectedLanguage": {
+                "name": "English (US)",
+                "code": "en-US",
+                "confidence": 0.99,
+                "source": "fasttext"
+            }
         },
-        language: Language {
-            name: "English (US)".to_string(),
-            code: "en-US".to_string(),
-            detected_language: LanguageDetectedLanguage {
-                name: "English (US)".to_string(),
-                code: "en-US".to_string(),
-                confidence: 0.99,
-                source: "fasttext".to_string(),
+        "matches": [{
+            "message": "Possible spelling mistake found.",
+            "shortMessage": "Spelling mistake",
+            "replacements": [{ "value": "the" }, { "value": "teh" }],
+            "offset": offset,
+            "length": length,
+            "context": {
+                "text": "some context",
+                "offset": offset,
+                "length": length
             },
-        },
-        matches: vec![Match {
-            message: "Possible spelling mistake found.".to_string(),
-            short_message: "Spelling mistake".to_string(),
-            replacements: vec![
-                Replacement {
-                    value: "the".to_string(),
-                },
-                Replacement {
-                    value: "teh".to_string(),
-                },
-            ],
-            offset,
-            length,
-            context: Context {
-                text: "some context".to_string(),
-                offset,
-                length,
+            "sentence": "A sentence.",
+            "type": { "typeName": "misspelling" },
+            "rule": {
+                "id": rule_id,
+                "description": "Possible spelling mistake",
+                "issueType": "misspelling",
+                "category": { "id": category_id, "name": "Possible Typo" }
             },
-            sentence: "A sentence.".to_string(),
-            match_type: Type {
-                type_name: "misspelling".to_string(),
-            },
-            rule: Rule {
-                id: rule_id.to_string(),
-                description: "Possible spelling mistake".to_string(),
-                issue_type: "misspelling".to_string(),
-                category: Category {
-                    id: category_id.to_string(),
-                    name: "Possible Typo".to_string(),
-                },
-            },
-            ignore_for_incomplete_sentence: false,
-            context_for_sure_match: 0,
+            "ignoreForIncompleteSentence": false,
+            "contextForSureMatch": 0
         }],
-        sentence_ranges: vec![vec![0, 20]],
-        extended_sentence_ranges: vec![],
-    }
+        "sentenceRanges": [[0, 20]],
+        "extendedSentenceRanges": []
+    });
+    serde_json::to_vec(&response).unwrap()
+}
+
+/// The zero-findings answer: full envelope, no matches.
+fn empty_response_body() -> Vec<u8> {
+    let response = serde_json::json!({
+        "software": { "name": "LanguageTool", "version": "6.9-SNAPSHOT" },
+        "warnings": { "incompleteResults": false },
+        "language": { "name": "English (US)", "code": "en-US" },
+        "matches": [],
+        "sentenceRanges": [],
+        "extendedSentenceRanges": []
+    });
+    serde_json::to_vec(&response).unwrap()
 }
 
 /// Spawns a mock LanguageTool HTTP server replying to every request with `response`.
@@ -112,22 +111,13 @@ fn mock_server(response: Vec<u8>) -> u16 {
     port
 }
 
-fn json_response(dto: &LanguageToolDto) -> Vec<u8> {
-    serde_json::to_vec(dto).unwrap()
-}
-
 fn recommendation_ranges(recommendations: &[Recommendation]) -> Vec<Range> {
     recommendations.iter().map(|r| r.range).collect()
 }
 
 #[tokio::test]
 async fn returns_recommendations_from_server() {
-    let port = mock_server(json_response(&make_dto(
-        "MORFOLOGIK_RULE_EN_US",
-        "TYPOS",
-        17,
-        3,
-    )));
+    let port = mock_server(response_body("MORFOLOGIK_RULE_EN_US", "TYPOS", 17, 3));
 
     let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     let recommendations = client
@@ -154,9 +144,7 @@ async fn returns_recommendations_from_server() {
 
 #[tokio::test]
 async fn returns_empty_when_no_matches() {
-    let mut dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 0, 3);
-    dto.matches.clear();
-    let port = mock_server(json_response(&dto));
+    let port = mock_server(empty_response_body());
 
     let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     let recommendations = client.get_recommendation("a perfect text").await.unwrap();
@@ -166,8 +154,7 @@ async fn returns_empty_when_no_matches() {
 
 #[tokio::test]
 async fn applies_configured_rule_colors() {
-    let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5);
-    let port = mock_server(json_response(&dto));
+    let port = mock_server(response_body("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5));
 
     let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![
@@ -187,8 +174,7 @@ async fn applies_configured_rule_colors() {
 
 #[tokio::test]
 async fn falls_back_to_category_then_default_color() {
-    let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5);
-    let port = mock_server(json_response(&dto));
+    let port = mock_server(response_body("MORFOLOGIK_RULE_EN_US", "TYPOS", 3, 5));
 
     let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![("CATEGORY:TYPOS".to_string(), "#abcdab".to_string())]);
@@ -256,8 +242,8 @@ async fn errors_when_server_unreachable() {
 
 #[tokio::test]
 async fn update_address_switches_server() {
-    let port_a = mock_server(json_response(&make_dto("RULE_A", "TYPOS", 1, 2)));
-    let port_b = mock_server(json_response(&make_dto("RULE_B", "GRAMMAR", 3, 4)));
+    let port_a = mock_server(response_body("RULE_A", "TYPOS", 1, 2));
+    let port_b = mock_server(response_body("RULE_B", "GRAMMAR", 3, 4));
 
     let mut client = LanguageToolClient::new(format!("127.0.0.1:{port_a}"));
     let first = client.get_recommendation("text").await.unwrap();
@@ -272,8 +258,7 @@ async fn update_address_switches_server() {
 async fn bare_hosts_get_http_scheme() {
     // A bare address (no scheme) must still produce a working request;
     // this guards against regressions of the missing http:// bug
-    let dto = make_dto("MORFOLOGIK_RULE_EN_US", "TYPOS", 0, 1);
-    let port = mock_server(json_response(&dto));
+    let port = mock_server(response_body("MORFOLOGIK_RULE_EN_US", "TYPOS", 0, 1));
 
     let client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     let recommendations = client.get_recommendation("text").await.unwrap();
@@ -294,8 +279,7 @@ async fn bare_hosts_get_http_scheme() {
 
 #[tokio::test]
 async fn update_colors_takes_effect_immediately() {
-    let dto = make_dto("RULE_X", "TYPOS", 2, 4);
-    let port = mock_server(json_response(&dto));
+    let port = mock_server(response_body("RULE_X", "TYPOS", 2, 4));
 
     let mut client = LanguageToolClient::new(format!("127.0.0.1:{port}"));
     client.set_colors(vec![("RULE:RULE_X".to_string(), "#00ff00".to_string())]);

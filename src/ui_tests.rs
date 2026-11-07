@@ -20,7 +20,7 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::path::{Path, PathBuf};
 
-use crate::constants::{DEFAULT_FAKE_FIXTURE, TEST_ID};
+use crate::constants::TEST_ID;
 
 extern "C" {
     fn rhesis_quick_test_main(
@@ -61,7 +61,6 @@ pub fn run_suites() -> i32 {
     // The fake daemon owns the socket name for this process: the boot probe
     // in connection.rs sees the env pin and never spawns a detached binary.
     crate::fake_daemon::spawn();
-    seed_fake_provider();
     if let Err(message) = isolate_environment() {
         eprintln!("ui-tests: refusing to run: {message}");
         return 1;
@@ -123,15 +122,6 @@ pub fn run_suites() -> i32 {
             name.as_ptr(),
             suite_dir.as_ptr(),
         )
-    }
-}
-
-/// Selects the recorded-checker fixture unless the caller already named one.
-/// Worker selection reads the variable when the worker starts — which is
-/// after this — so release behavior only changes for harness runs.
-fn seed_fake_provider() {
-    if std::env::var_os("RHESIS_FAKE_LT").is_none() {
-        std::env::set_var("RHESIS_FAKE_LT", DEFAULT_FAKE_FIXTURE);
     }
 }
 

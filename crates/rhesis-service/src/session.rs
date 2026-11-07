@@ -22,7 +22,7 @@ use std::{
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use interprocess::{local_socket::Stream, TryClone};
 
-use rhesis_languagetool::service::{LanguageToolWorkerEvent, Message};
+use rhesis_languagetool::service::{LanguageToolWorkerEvent, ServiceMessage};
 use rhesis_protocol::constants::PROTOCOL;
 use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Settings};
 
@@ -297,14 +297,14 @@ fn spawn_relay(
                 crossbeam::select! {
                     recv(stop_signal) -> _ => break,
                     recv(receiver) -> message => match message {
-                        Ok(Message::StatusChanged(status)) => {
+                        Ok(ServiceMessage::StatusChanged(status)) => {
                             *state.last_status.lock().unwrap() = status.clone();
                             let mut stream = write_side.lock().unwrap();
                             if write_frame(&mut *stream, &DaemonMsg::Status(status)).is_err() {
                                 break;
                             }
                         }
-                        Ok(Message::Suggestion(suggestions)) => {
+                        Ok(ServiceMessage::Suggestion(suggestions)) => {
                             let mut stream = write_side.lock().unwrap();
                             if write_frame(&mut *stream, &DaemonMsg::Suggestion(suggestions.0))
                                 .is_err()

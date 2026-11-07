@@ -10,8 +10,8 @@ log.workspace = true
 crossbeam.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-# The fake completion provider (RHESIS_FAKE_LT) parses recorded fixtures,
-# so this is a runtime dependency, not just a dev one.
+# The fake completion provider (the --fake-lt harness seam) parses recorded
+# fixtures, so this is a runtime dependency, not just a dev one.
 serde_json.workspace = true
 # The worker drives its HTTP client on an internal runtime.
 tokio.workspace = true
@@ -33,7 +33,7 @@ path = "tests/unit/languagetool_client.rs"
 name = "languagetool-service"
 path = "tests/unit/languagetool_service.rs"
 
-# LanguageTool DTO: serde round-trip against a recorded response.
+# LanguageTool DTOs: serde round-trip against a recorded response.
 [[test]]
-name = "languagetool-models"
-path = "tests/unit/languagetool_models.rs"
+name = "languagetool-dto"
+path = "tests/unit/languagetool_dto.rs"

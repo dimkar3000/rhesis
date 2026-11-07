@@ -2,7 +2,8 @@
 //! of the shipped binary.
 //!
 //! The first launch becomes primary and stays alive with its UI (its own
-//! full boot, driven further by the real worker under the fake provider);
+//! full boot, driven further by the real worker under the fake provider
+//! handed over through the client's forwarded `--fake-lt` argument);
 //! the second launch detects the machine-global abstract socket name, nudges
 //! the running instance to show its window, and exits without a UI of its
 //! own.
@@ -32,6 +33,12 @@ use std::time::{Duration, Instant};
 
 use rhesis_platform::constants::SOCKET_NAME;
 
+/// The fixture id handed to the primary's daemon spawn through the
+/// client's forwarded `--fake-lt` argument (see `connection.rs`): the
+/// worker builds the fake provider, so no LanguageTool is ever spawned by
+/// either real binary.
+const FAKE_FIXTURE: &str = "checker";
+
 /// How long each observable step may take: the primary must offer its
 /// guard socket quickly, the secondary must stand down without a UI, and
 /// the primary's own boot (engine load included) must reach the event loop.
@@ -47,17 +54,21 @@ type SharedLog = Arc<Mutex<String>>;
 #[test]
 fn second_real_launch_stands_down_against_the_first() {
     // Preconditions: nothing owns the machine-global socket yet, and the
-    // children share the hermetic sandbox (their QSettings, caches, and the
-    // fake provider live under build/ui-tests/instance-env).
+    // children share the hermetic sandbox (their QSettings and caches live
+    // under build/ui-tests/instance-env).
     assert_socket_is_free();
     if let Err(message) = common::isolate_environment("instance-env") {
         panic!("refusing to run: {message}");
     }
-    common::seed_fake_provider();
 
     // Primary: a real UI boot. `--hidden` is the autostart opener's shape;
-    // the fake worker answers its checks, so no LanguageTool is spawned.
-    let mut primary = ChildGuard::new(launch("primary", &["--hidden"]), "the primary instance");
+    // `--fake-lt` travels arguments-only end to end: the client re-emits
+    // it on the spawned daemon's command line, whose provider then answers
+    // the checks from the recorded fixture — no LanguageTool is spawned.
+    let mut primary = ChildGuard::new(
+        launch("primary", &["--hidden", "--fake-lt", FAKE_FIXTURE]),
+        "the primary instance",
+    );
 
     // The primary binds the guard socket before any UI exists (see the
     // `acquire` doc): a connect success proves the guard is live. This

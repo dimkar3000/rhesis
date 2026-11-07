@@ -16,7 +16,8 @@ use std::{
 use crossbeam::channel::RecvTimeoutError;
 use rhesis_languagetool::constants::MAX_START_FAILURES;
 use rhesis_languagetool::service::{
-    LanguageToolWorker, LanguageToolWorkerEvent, Message, Suggestion, WorkerHandles, WorkerStatus,
+    LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, ServiceSuggestion, WorkerHandles,
+    WorkerStatus,
 };
 
 // Note: the `ensure_server_properties` tests were moved back to
@@ -60,12 +61,12 @@ fn wait_for_status(
     while std::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match handles.message_receiver.recv_timeout(remaining) {
-            Ok(Message::StatusChanged(s)) => {
+            Ok(ServiceMessage::StatusChanged(s)) => {
                 if predicate(&s) {
                     return Some(s);
                 }
             }
-            Ok(Message::Suggestion(_)) => continue,
+            Ok(ServiceMessage::Suggestion(_)) => continue,
             Err(_) => return None,
         }
     }
@@ -73,13 +74,13 @@ fn wait_for_status(
 }
 
 /// Receive the next `Suggestion`, skipping over `StatusChanged` noise.
-fn recv_suggestion(handles: &WorkerHandles, timeout: Duration) -> Option<Suggestion> {
+fn recv_suggestion(handles: &WorkerHandles, timeout: Duration) -> Option<ServiceSuggestion> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match handles.message_receiver.recv_timeout(remaining) {
-            Ok(Message::Suggestion(s)) => return Some(s),
-            Ok(Message::StatusChanged(_)) => continue,
+            Ok(ServiceMessage::Suggestion(s)) => return Some(s),
+            Ok(ServiceMessage::StatusChanged(_)) => continue,
             Err(_) => return None,
         }
     }
@@ -92,10 +93,10 @@ fn assert_no_suggestion(handles: &WorkerHandles, timeout: Duration) {
     while std::time::Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match handles.message_receiver.recv_timeout(remaining) {
-            Ok(Message::Suggestion(s)) => {
+            Ok(ServiceMessage::Suggestion(s)) => {
                 panic!("expected no suggestion, got: {s:?}")
             }
-            Ok(Message::StatusChanged(_)) => continue,
+            Ok(ServiceMessage::StatusChanged(_)) => continue,
             Err(RecvTimeoutError::Timeout) => return,
             Err(e) => panic!("unexpected error: {e:?}"),
         }

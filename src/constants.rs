@@ -31,6 +31,13 @@ pub(crate) const BOOT_BUDGET: Duration = Duration::from_secs(2);
 /// daemon to bind) and the disconnect-wait alarm tick (see [`RETRY_CHUNK`]).
 pub(crate) const PROBE_SLICE: Duration = RETRY_CHUNK;
 
+/// The daemon argument this client re-emits from its own command line
+/// (`--fake-lt <fixture>`, see `connection.rs :: forwarded_daemon_args`):
+/// the e2e tiers launch the client with the flag, the spawned daemon
+/// resolves the recorded fixture provider through its own clap parse —
+/// the decision travels only through arguments.
+pub(crate) const FAKE_FIXTURE_FLAG: &str = "--fake-lt";
+
 /// How long a boot replay read may block before the probe bails. The
 /// replay is deterministic (Settings + Status right after the greeting),
 /// so hitting this means a wedged peer — boot on defaults instead.
@@ -85,7 +92,3 @@ pub(crate) const FIXTURE_SPELL_TOOLTIP: &str = "Possible spelling mistake found.
 /// Runner process name and Quick Test suite id, reported in the output
 /// banner (`********* Start testing of rhesis-ui-tests *********`).
 pub(crate) const TEST_ID: &str = "rhesis-ui-tests";
-
-/// Fixture id served to worker requests when the caller did not pick one
-/// (`RHESIS_FAKE_LT=<id>` overridable, see `CompletionProvider::new`).
-pub(crate) const DEFAULT_FAKE_FIXTURE: &str = "checker";

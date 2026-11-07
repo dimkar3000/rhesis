@@ -1,9 +1,10 @@
 use rhesis_protocol::{Range, Recommendation};
 
 use crate::{
+    color_rules::ColorRules,
     constants::{CHECK_PATH, DEFAULT_MATCH_COLOR},
-    helpers::{normalize_address, ColorRules},
-    models::LanguageToolDto,
+    dto::LanguageToolDto,
+    helpers::normalize_address,
 };
 
 #[derive(Default)]
@@ -15,7 +16,7 @@ pub struct LanguageToolClient {
 impl LanguageToolClient {
     pub fn new<T: AsRef<str>>(base_url: T) -> LanguageToolClient {
         Self {
-            address: crate::helpers::normalize_address(base_url.as_ref()),
+            address: normalize_address(base_url.as_ref()),
             ..Default::default()
         }
     }
@@ -38,15 +39,13 @@ impl LanguageToolClient {
             Err(_) => return false,
         };
 
-        let form_data = [
-            ("text", "ok"),
-            ("language", "en-US"),
-            ("enabledOnly", "false"),
-        ];
-
         match client
             .post(format!("{}/{}", self.address, CHECK_PATH))
-            .form(&form_data)
+            .form(&[
+                ("text", "ok"),
+                ("language", "en-US"),
+                ("enabledOnly", "false"),
+            ])
             .send()
             .await
         {
@@ -57,7 +56,7 @@ impl LanguageToolClient {
 
     pub fn set_colors(&mut self, rules: Vec<(String, String)>) {
         log::debug!("applying {} color rules", rules.len());
-        self.rules = ColorRules::from_wire(rules);
+        self.rules = ColorRules::new(rules);
     }
 
     pub async fn get_recommendation(
@@ -68,15 +67,13 @@ impl LanguageToolClient {
 
         let client = reqwest::Client::new();
 
-        let form_data = [
-            ("text", input),
-            ("language", "auto"),
-            ("enabledOnly", "false"),
-        ];
-
         let response = client
             .post(format!("{}/{}", self.address, CHECK_PATH))
-            .form(&form_data)
+            .form(&[
+                ("text", input),
+                ("language", "auto"),
+                ("enabledOnly", "false"),
+            ])
             .send()
             .await;
 
@@ -106,26 +103,28 @@ impl LanguageToolClient {
     }
 }
 
-/// Convert a LanguageTool response body into UI recommendations using the
-/// given color rules. Shared by the live client (HTTP answers) and the fake
-/// provider (recorded fixtures), so fixtures carry the real conversion.
 pub(crate) fn map_dto(body: LanguageToolDto, rules: &ColorRules) -> Vec<Recommendation> {
     let language = body.language.code.to_uppercase();
     let mut recommendations = Vec::new();
+
     for x in body.matches {
-        // Per match (independent of replacements): look the color up
-        // once and move the DTO's own strings out — no re-copies.
+        // The DTO match carries both ids: search with the rule's override
+        // and the category behind it, falling back to the caller's default
+        // when neither table has the pair.
         let color = rules
-            .color(&x.rule.id, &x.rule.category.id)
+            .get_color(Some(&x.rule.id), Some(&x.rule.category.id))
             .unwrap_or(DEFAULT_MATCH_COLOR)
             .to_owned();
+
         let rule_id = x.rule.id;
         let category_id = x.rule.category.id;
         let tooltip = x.message;
+
         let range = Range {
             start: x.offset,
             length: x.length,
         };
+
         for replacement in x.replacements {
             recommendations.push(Recommendation {
                 color: color.clone(),

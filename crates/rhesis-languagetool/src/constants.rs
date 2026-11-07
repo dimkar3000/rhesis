@@ -27,8 +27,3 @@ pub(crate) const FASTTEXT_LAYOUTS: &[(&str, &str)] = &[
 /// Directory of the recorded fixture files, relative to this crate's
 /// manifest root: `<id>.json` tables of `text → recorded answer` entries.
 pub(crate) const FIXTURE_DIR: &str = "tests/fixtures/lt";
-
-/// Environment seam selecting the recorded fixture provider
-/// (`RHESIS_FAKE_LT=<fixture id>`): the harness tiers seed it before the
-/// worker starts, production never sets it.
-pub const FAKE_LT_ENV: &str = "RHESIS_FAKE_LT";

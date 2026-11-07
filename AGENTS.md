@@ -83,7 +83,7 @@ Layout:
 |------|----------|
 | `src/**` | `#[cfg(test)]` modules for private-logic tests (highlighter fan-out/spy sink, connection backoff, snapshot parse→QVariant) |
 | `crates/rhesis-service` | daemon-session tier under `tests/unit/` (wire semantics against a real store) |
-| `crates/rhesis-languagetool` | `src/provider.rs` in-module tests + tiers `languagetool_{client,models,service}` under `tests/unit/`, fixtures under `tests/fixtures/lt/` |
+| `crates/rhesis-languagetool` | `src/completion_provider.rs` in-module tests + tiers `languagetool_{client,dto,service}` under `tests/unit/`, fixtures under `tests/fixtures/lt/` |
 | `crates/rhesis-platform` | `autostart.rs` in-module tests + `single-instance` tier under `tests/unit/` |
 | `tests/e2e/` | Whole-process tiers: `ui_boot.rs`, `single_instance_e2e.rs`, `qml_suites.rs` |
 | `tests/ui/` | Qt Quick Test suites (`tst_*.qml`) + `harness.js` |
@@ -113,8 +113,14 @@ Docker/CI plumbing.
 Every tier is offline and side-effect free by construction, so no test needs
 a LanguageTool installation or a running server:
 
-- Worker/provider requests are answered by the recorded fixture (`RHESIS_FAKE_LT`,
-  resolved by `CompletionProvider::chosen`) — never java, never the network.
+- Worker/provider requests are answered by the recorded fixture — never java,
+  never the network. The fake-vs-real decision travels only through
+  arguments: the daemon takes `--fake-lt <fixture>` (clap →
+  `DaemonOptions::fake_fixture`, built from `CompletionProvider::new_live` /
+  `::new_fake`), in-process tiers set the field directly, and the one real-binary
+  tier (single-instance) launches the client with `--fake-lt` and lets the
+  client re-emit the flag on the daemon command line it spawns — no
+  environment variable carries the choice anywhere.
   The Qt tiers never own a worker: they point their clients at the in-process
   fake daemon (`src/fake_daemon.rs`), whose socket name is pinned through
   `RHESIS_SERVICE_SOCKET` ahead of every client (the env pin also disables

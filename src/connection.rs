@@ -60,21 +60,59 @@ fn daemon_binary() -> Option<std::path::PathBuf> {
     })
 }
 
-/// Spawn the daemon detached. Best-effort: a missing or failing binary is
-/// logged and retried after [`SPAWN_INTERVAL`]; the UI boots into
-/// `Disconnected` meanwhile.
+/// Spawn the daemon detached, forwarding the client's own `--fake-lt`
+/// fixture when it was launched with one. Best-effort: a missing or
+/// failing binary is logged and retried after [`SPAWN_INTERVAL`]; the UI
+/// boots into `Disconnected` meanwhile.
 fn spawn_daemon() {
     if !spawning_allowed() {
         return;
     }
+    let arguments = forwarded_daemon_args();
     match daemon_binary() {
         Some(binary) => {
-            if let Err(e) = rhesis_platform::process::spawn_detached(binary) {
+            if let Err(e) = rhesis_platform::process::spawn_detached(binary, &arguments) {
                 log::warn!("cannot respawn the Rhesis service daemon ({e})");
             }
         }
         None => log::warn!("cannot respawn the Rhesis service daemon: no executable directory"),
     }
+}
+
+/// The fixture decision travels only through arguments end to end: a
+/// `--fake-lt <fixture>` flag on this client's command line (the e2e tiers
+/// reach their daemon exactly that way — the client owns no daemon
+/// options, it just re-emits what it received) lands verbatim on the
+/// daemon command line, where clap resolves it into the real daemon's
+/// fixture provider.
+fn forwarded_daemon_args() -> Vec<String> {
+    forwarded_daemon_args_from(std::env::args())
+}
+
+/// The parsing behind [`forwarded_daemon_args`], driven by an argument
+/// iterator so the unit tests can feed synthetic command lines.
+fn forwarded_daemon_args_from(argv: impl Iterator<Item = String>) -> Vec<String> {
+    let flag = crate::constants::FAKE_FIXTURE_FLAG;
+    let mut arguments = Vec::new();
+    let mut argv = argv;
+    while let Some(arg) = argv.next() {
+        if arg == flag {
+            // Separated value: the next argument is the fixture id — but
+            // every other flag's value must not be stolen, so forwarding
+            // only covers the `--fake-lt` arguments themselves.
+            if let Some(fixture) = argv.next() {
+                arguments.push(flag.to_string());
+                arguments.push(fixture);
+            }
+        } else if let Some((name, _value)) = arg.split_once('=') {
+            // Attached value: forwarded as-is (clap on the daemon side
+            // accepts `--fake-lt=<fixture>`).
+            if name == flag {
+                arguments.push(arg);
+            }
+        }
+    }
+    arguments
 }
 
 /// Spawn only when the last attempt is old enough, so a daemon that dies
@@ -538,5 +576,48 @@ mod tests {
         // Cap reached from below and respected at the cap.
         assert_eq!(grow_backoff(RETRY_MAX / 2), RETRY_MAX);
         assert_eq!(grow_backoff(RETRY_MAX), RETRY_MAX);
+    }
+
+    fn forwarded(argv: &[&str]) -> Vec<String> {
+        forwarded_daemon_args_from(
+            argv.iter()
+                .map(|arg| arg.to_string())
+                .collect::<Vec<_>>()
+                .into_iter(),
+        )
+    }
+
+    #[test]
+    fn fixture_argument_forwards_every_shape() {
+        let id = crate::constants::FAKE_FIXTURE_FLAG;
+
+        // No flag on the client line: production forwards nothing.
+        assert!(forwarded(&[]).is_empty());
+        assert!(forwarded(&["--hidden"]).is_empty());
+
+        // Separated value (the tier's launch shape) and attached value.
+        assert_eq!(
+            forwarded(&[id, "checker"]),
+            [id.to_string(), "checker".to_string()]
+        );
+        let attached = format!("{id}=checker");
+        assert_eq!(forwarded(&[&attached]), [attached.as_str()]);
+
+        // Multiple occurrences forward in order; a flag without a value
+        // forwards nothing instead of stealing the next argument.
+        assert_eq!(
+            forwarded(&[id, "a", id, "b"]),
+            [
+                id.to_string(),
+                "a".to_string(),
+                id.to_string(),
+                "b".to_string()
+            ]
+        );
+        assert!(forwarded(&[id]).is_empty());
+
+        // A foreign `--flag=value` is not touched (only the fixture flag's
+        // own value is forwarded).
+        assert!(forwarded(&["--port=8080"]).is_empty());
     }
 }

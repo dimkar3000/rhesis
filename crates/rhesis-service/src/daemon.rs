@@ -29,7 +29,7 @@ use interprocess::local_socket::{
     ToNsName as _,
 };
 
-use rhesis_languagetool::service::{LanguageToolWorker, LanguageToolWorkerEvent, Message};
+use rhesis_languagetool::service::{LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage};
 use rhesis_protocol::{
     constants::{PROTOCOL, SERVICE_SOCKET_NAME},
     write_frame, DaemonMsg, Settings, WorkerStatus,
@@ -57,6 +57,12 @@ pub struct DaemonOptions {
     pub ini_path: Option<PathBuf>,
     /// Idle window after the last client leaves.
     pub idle_grace: Duration,
+    /// Recorded fixture id for the fake provider (the binary's `--fake-lt`
+    /// argument — passed through by the client harness when the client was
+    /// launched with the same flag); `None` runs the real LanguageTool
+    /// server. Test tiers pin it directly to stay hermetic — see the
+    /// Hermeticity section of AGENTS.md / TestingRefactor.md.
+    pub fake_fixture: Option<String>,
 }
 
 impl DaemonOptions {
@@ -66,6 +72,8 @@ impl DaemonOptions {
             store_path: None,
             ini_path: rhesis_platform::paths::qsettings_ini_path(),
             idle_grace: Duration::from_secs(5),
+            // Real LanguageTool server: only the harness seam sets a fixture.
+            fake_fixture: None,
         }
     }
 }
@@ -103,7 +111,7 @@ pub struct DaemonState {
     /// The worker's event channel (shared with the pump).
     pub(crate) event_sender: Sender<LanguageToolWorkerEvent>,
     /// The worker's message receiver, parked here between sessions.
-    pub(crate) receiver_slot: Mutex<Option<Receiver<Message>>>,
+    pub(crate) receiver_slot: Mutex<Option<Receiver<ServiceMessage>>>,
 }
 
 /// Run the daemon to completion: bind, serve, and shut the worker down.
@@ -135,10 +143,13 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
     let stored = store.load();
 
     // 2. Worker: LanguageTool manager thread, spawned with its channels.
-    //    A fake provider (test harness via RHESIS_FAKE_LT) resolves inside
-    //    the worker thread, so seeding the variable must happen before
-    //    this call.
-    let Some(worker) = LanguageToolWorker::default().start() else {
+    //    The fake-vs-real decision is pinned in the options (the binary's
+    //    `--fake-lt` argument); the fixture itself is indexed inside the
+    //    worker thread, so a broken fixture degrades to live there.
+    let Some(worker) = LanguageToolWorker::default()
+        .with_fake_fixture(options.fake_fixture.clone())
+        .start()
+    else {
         return Err("LanguageTool worker failed to spawn".to_string());
     };
 

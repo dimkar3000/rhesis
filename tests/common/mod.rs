@@ -13,9 +13,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-/// Fixture id served to worker requests unless the caller already named one.
-pub(crate) const DEFAULT_FAKE_FIXTURE: &str = "checker";
-
 /// Every writable home the process could touch, paired with its sandbox
 /// subdirectory name.
 const XDG_ROOTS: [(&str, &str); 5] = [
@@ -54,14 +51,4 @@ pub(crate) fn isolate_environment(name: &str) -> Result<(), String> {
         std::env::set_var(variable, &directory);
     }
     Ok(())
-}
-
-/// Selects the recorded-checker fixture unless the caller already named one.
-/// Worker selection reads the variable when the worker starts, so seeding it
-/// before the boot code runs keeps the tier hermetic without touching
-/// release behavior.
-pub(crate) fn seed_fake_provider() {
-    if std::env::var_os("RHESIS_FAKE_LT").is_none() {
-        std::env::set_var("RHESIS_FAKE_LT", DEFAULT_FAKE_FIXTURE);
-    }
 }
