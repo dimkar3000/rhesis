@@ -463,40 +463,6 @@ fn set_settings_persists_and_switches_to_remote() {
     assert_eq!(outcome, Ok(()));
 }
 
-/// `SetPort` is a settings change too: mirrored, persisted, and the worker
-/// restarts on the port (the fake completes instantly in either state).
-#[test]
-fn set_port_round_trips_persist_and_worker() {
-    let pod = DaemonPod::start("set-port", Duration::from_secs(5), None);
-    let mut client = open_session(&pod.socket_name);
-    client.expect_hello(false);
-    let base = client.expect_settings();
-    assert_eq!(base.port, rhesis_protocol::constants::DEFAULT_PORT);
-
-    client.send(&ClientMsg::SetPort(7777));
-    assert_eq!(
-        client.expect_settings().port,
-        7777,
-        "the port change mirrored back"
-    );
-    assert_eq!(
-        pod.store_json()["settings"]["port"],
-        7777,
-        "persisted into the store"
-    );
-
-    client.wait_for_status("fake server restarted", WorkerStatus::is_started);
-    let expected = fixture_records();
-    client.send(&ClientMsg::Check {
-        text: FIXTURE_TEXT.to_string(),
-    });
-    client.wait_for_suggestions("post-restart answers", |recs| recs == &expected);
-
-    client.send(&ClientMsg::Shutdown);
-    let outcome = pod.wait_result(DEADLINE);
-    assert_eq!(outcome, Ok(()));
-}
-
 /// `Shutdown` from the client: the daemon breaks its accept loop, kills
 /// the worker, joins it, and the run reports success.
 #[test]

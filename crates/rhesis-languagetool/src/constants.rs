@@ -2,7 +2,7 @@
 //! seam identifiers.
 
 /// How many consecutive start attempts may fail before the worker gives up
-/// and latches into `Failed`. Reset by `Stop`, `SetPort` and `Retry`.
+/// and latches into `Failed`. Reset by `Stop` and `Retry`.
 pub const MAX_START_FAILURES: u32 = 3;
 
 /// The color a recommendation gets when neither its rule id nor its

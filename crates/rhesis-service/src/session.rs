@@ -163,14 +163,6 @@ fn serve(
             ClientMsg::Start => send(state, LanguageToolWorkerEvent::Start),
             ClientMsg::Stop => send(state, LanguageToolWorkerEvent::Stop),
             ClientMsg::Retry => send(state, LanguageToolWorkerEvent::Retry),
-            ClientMsg::SetPort(port) => {
-                let mut snapshot = state.settings.lock().unwrap().clone();
-                snapshot.port = port;
-                let events = vec![LanguageToolWorkerEvent::SetPort(port)];
-                if !apply_snapshot(write_side, state, snapshot, events) {
-                    break false;
-                }
-            }
             ClientMsg::SwitchToRemote(address) => {
                 let address = address.trim().to_string();
                 let mut snapshot = state.settings.lock().unwrap().clone();

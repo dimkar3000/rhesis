@@ -149,7 +149,6 @@ pub enum Command {
     Check(String),
     Start,
     Stop,
-    SetPort(u16),
     Retry,
     SwitchToRemote(String),
     SetSettings(Settings),
@@ -167,7 +166,6 @@ impl std::fmt::Debug for Command {
             }
             Command::Start => write!(f, "Start"),
             Command::Stop => write!(f, "Stop"),
-            Command::SetPort(port) => write!(f, "SetPort({port})"),
             Command::Retry => write!(f, "Retry"),
             Command::SwitchToRemote(address) => write!(f, "SwitchToRemote({address})"),
             Command::SetSettings(settings) => write!(f, "SetSettings({settings:?})"),
@@ -370,7 +368,6 @@ fn to_wire(command: Command) -> Option<ClientMsg> {
         Command::Check(text) => Some(ClientMsg::Check { text }),
         Command::Start => Some(ClientMsg::Start),
         Command::Stop => Some(ClientMsg::Stop),
-        Command::SetPort(port) => Some(ClientMsg::SetPort(port)),
         Command::Retry => Some(ClientMsg::Retry),
         Command::SwitchToRemote(address) => Some(ClientMsg::SwitchToRemote(address)),
         Command::SetSettings(settings) => Some(ClientMsg::SetSettings(settings)),

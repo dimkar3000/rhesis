@@ -175,8 +175,6 @@ pub enum ClientMsg {
     Start,
     /// Stop the embedded LanguageTool server.
     Stop,
-    /// Change the embedded server's port (also stored by the daemon).
-    SetPort(u16),
     /// Clear the failure budget and try the current server again.
     Retry,
     /// Switch to an external LanguageTool at this base URL.

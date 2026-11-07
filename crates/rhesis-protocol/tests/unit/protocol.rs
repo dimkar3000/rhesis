@@ -66,10 +66,6 @@ fn client_check_round_trips() {
 fn client_lifecycle_round_trips() {
     assert_eq!(round_trip(ClientMsg::Start), ClientMsg::Start);
     assert_eq!(round_trip(ClientMsg::Stop), ClientMsg::Stop);
-    assert_eq!(
-        round_trip(ClientMsg::SetPort(7654)),
-        ClientMsg::SetPort(7654)
-    );
     assert_eq!(round_trip(ClientMsg::Retry), ClientMsg::Retry);
 }
 

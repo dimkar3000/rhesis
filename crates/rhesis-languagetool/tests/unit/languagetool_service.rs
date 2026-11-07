@@ -382,11 +382,14 @@ fn start_failures_latch_to_failed_after_three() {
         Duration::from_secs(5),
     );
 
-    // Point the worker at the occupied port once (SetPort clears the budget,
-    // so do it only once, then accumulate failures with Start alone).
+    // Point the worker at the occupied port: the restart attempt itself
+    // fails fast and consumes budget entry 1 (RestartLocalServer resets the
+    // budget before trying, the spawn sees the busy port and, with no
+    // LanguageTool to adopt, returns to Stopped). The remaining failures
+    // accumulate with Start alone — from Stopped, Start resets nothing.
     handles
         .event_sender
-        .send(LanguageToolWorkerEvent::SetPort(bad_port))
+        .send(LanguageToolWorkerEvent::RestartLocalServer(bad_port))
         .unwrap();
     assert!(wait_for_status(
         &handles,
@@ -395,7 +398,7 @@ fn start_failures_latch_to_failed_after_three() {
     )
     .is_some());
 
-    for attempt in 1..=MAX_START_FAILURES {
+    for attempt in 2..=MAX_START_FAILURES {
         handles
             .event_sender
             .send(LanguageToolWorkerEvent::Start)

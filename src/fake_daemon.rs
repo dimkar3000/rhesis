@@ -287,13 +287,6 @@ fn serve(read_side: &mut Stream, write_side: &mut Stream, state: &Arc<FakeState>
                     break;
                 }
             }
-            ClientMsg::SetPort(port) => {
-                let mut snapshot = state.settings.lock().unwrap().clone();
-                snapshot.port = port;
-                if !mirror_and_reply(write_side, state, snapshot) {
-                    break;
-                }
-            }
             ClientMsg::SwitchToRemote(address) => {
                 let mut snapshot = state.settings.lock().unwrap().clone();
                 snapshot.embedded = false;

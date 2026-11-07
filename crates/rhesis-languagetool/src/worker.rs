@@ -32,7 +32,6 @@ pub enum LanguageToolWorkerEvent {
 
     SwitchToRemoteServer(String),
     RestartLocalServer(u16),
-    SetPort(u16),
 }
 
 /// Handles to talk with a running [`LanguageToolWorker`] from other threads
@@ -438,7 +437,7 @@ impl LanguageToolWorker {
                     Outcome::Continue
                 }
                 WorkerStatus::Failed(reason) => {
-                    log::warn!("Start ignored while Failed({reason}); use Retry/Stop/SetPort");
+                    log::warn!("Start ignored while Failed({reason}); use Retry or Stop");
                     Outcome::Continue
                 }
                 WorkerStatus::Stopped => {
@@ -456,26 +455,6 @@ impl LanguageToolWorker {
                 self.terminate_child();
                 self.consecutive_failures = 0;
                 self.emit_status(WorkerStatus::Stopped);
-                Outcome::Continue
-            }
-            LanguageToolWorkerEvent::SetPort(port) => {
-                log::info!("Setting LanguageTool port to {port}");
-                self.local_port = port;
-                if self.use_local_server {
-                    provider.update_address(&self.active_address());
-                    // New port means a fresh budget.
-                    self.consecutive_failures = 0;
-                    let was_running =
-                        matches!(self.status, WorkerStatus::Started | WorkerStatus::Starting);
-                    if was_running {
-                        self.start_local_server(provider, runtime);
-                        *last_text = String::default();
-                    } else {
-                        // Stay Stopped but re-emit so the UI picks up the
-                        // port change (also clears Failed).
-                        self.emit_status(WorkerStatus::Stopped);
-                    }
-                }
                 Outcome::Continue
             }
             LanguageToolWorkerEvent::Retry => match self.status.clone() {
@@ -634,7 +613,6 @@ impl LanguageToolWorker {
                     let needs_restart = matches!(
                         event,
                         LanguageToolWorkerEvent::RestartLocalServer(_)
-                            | LanguageToolWorkerEvent::SetPort(_)
                             | LanguageToolWorkerEvent::Start
                             | LanguageToolWorkerEvent::Retry
                             | LanguageToolWorkerEvent::SwitchToRemoteServer(_)
@@ -652,7 +630,7 @@ impl LanguageToolWorker {
                         return;
                     }
                     if needs_restart {
-                        // e.g. SetPort while stopped already handled; but if
+                        // e.g. Retry while stopped already handled; but if
                         // the handler left us Starting without settling (should
                         // not happen), loop to verify the new child.
                         if matches!(self.status, WorkerStatus::Starting)
@@ -687,7 +665,6 @@ impl LanguageToolWorker {
                 Ok(LanguageToolWorkerEvent::Kill) => return VerifyOutcome::Killed,
                 Ok(other @ LanguageToolWorkerEvent::Stop)
                 | Ok(other @ LanguageToolWorkerEvent::StopLocalServer)
-                | Ok(other @ LanguageToolWorkerEvent::SetPort(_))
                 | Ok(other @ LanguageToolWorkerEvent::RestartLocalServer(_))
                 | Ok(other @ LanguageToolWorkerEvent::Start)
                 | Ok(other @ LanguageToolWorkerEvent::Retry)

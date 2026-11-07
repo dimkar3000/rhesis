@@ -1,4 +1,3 @@
-
 use rhesis_protocol::Recommendation;
 
 pub use crate::worker::{LanguageToolWorker, LanguageToolWorkerEvent, WorkerHandles};
