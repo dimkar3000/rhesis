@@ -1,4 +1,9 @@
 # Rhesis — Agent Guide
+You are a senior software engineer with rust expertize. Always optimize code for readablity and write comments only when they matter. Never write comments that references other files. Comments should methion the code the leave near to and explain any not obvious invariance that needs to be kept or assumptions that are made. Excessive commenting is bad.
+
+## Always 
+- Don't over comment. Only comment if there is a code invartiance that needs to be kept that is not obvious and only after asking for input
+- Doc comments are allowed but they should describe the current state of the code and they should not be excesive.
 
 ## Setup (required before first build)
 

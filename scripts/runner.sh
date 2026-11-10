@@ -212,7 +212,9 @@ launch() {
     # location and execs the payload. Beyond starting the binary, the
     # wrapper puts the payload's bin/ first on PATH so the daemon (spawned
     # as a sibling of the client from the same folder) and the embedded
-    # server can find the bundled java/fasttext.
+    # server can find the bundled java/fasttext, and exports RHESIS_LAUNCHER
+    # so the autostart writer points the login entry back at this launcher
+    # by reading the environment instead of probing for it.
     if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
         PREFIX="${HOME}/.local/share/rhesis"
     elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
@@ -234,6 +236,7 @@ launch() {
         exit 1
     fi
     export PATH="$PREFIX/bin:${PATH}"
+    export RHESIS_LAUNCHER="$SCRIPT_DIR/$(basename "$0")"
     if [ "$1" = "hidden" ]; then
         exec "$PREFIX/bin/rhesis" --hidden
     fi
@@ -272,7 +275,7 @@ case "${1:-}" in
         launch normal
         ;;
     --hidden)
-        # The login autostart contract: autostart.rs writes
+        # The login autostart contract: linux/autostart.rs writes
         # Exec=<launcher> --hidden. Accept only the bare flag.
         if [ "$#" -ne 1 ]; then
             echo "Error: unrecognized argument: $2" >&2

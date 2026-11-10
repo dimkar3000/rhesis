@@ -228,6 +228,11 @@ use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_Q
 use rhesis_protocol::constants::DEFAULT_PORT;
 use rhesis_protocol::Settings;
 
+pub(super) type AsyncMessagingHelperRust =
+    crate::interop::async_messaging_helper::AsyncMessagingHelperRust;
+pub(super) type CustomHighlighterRust = crate::interop::custom_highlighter::CustomHighlighterRust;
+pub(super) type LanguageManagerRust = crate::interop::language::LanguageManagerRust;
+
 /// The Qt-facing glue for the mirror object (its pure-information side —
 /// qproperty fields, snapshot parsing, [`Drop`] — lives in
 /// `async_messaging_helper.rs`, next to the connection-independent logic).
@@ -424,8 +429,3 @@ impl ffi::CustomHighlighter {
             .start_message_thread(helper_rust, helper_thread, highlighter_thread);
     }
 }
-
-pub(super) type AsyncMessagingHelperRust =
-    crate::interop::async_messaging_helper::AsyncMessagingHelperRust;
-pub(super) type CustomHighlighterRust = crate::interop::custom_highlighter::CustomHighlighterRust;
-pub(super) type LanguageManagerRust = crate::interop::language::LanguageManagerRust;

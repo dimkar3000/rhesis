@@ -8,7 +8,8 @@
 //! the running instance to show its window, and exits without a UI of its
 //! own.
 //!
-//! The socket name lives in the network namespace (see `src/single_instance.rs`),
+//! The socket name lives in the network namespace (see the guard in the
+//! platform crate's `linux/single_instance.rs`),
 //! so the XDG sandbox does not isolate it: the test refuses to run while
 //! another Rhesis instance owns the name. Stop any running instance (or
 //! stale earlier run) first.
@@ -25,13 +26,11 @@
 mod common;
 
 use std::io::{BufRead, BufReader};
-use std::os::linux::net::SocketAddrExt;
-use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rhesis_platform::constants::SOCKET_NAME;
+use rhesis_platform::single_instance::ping_primary;
 
 /// The fixture id handed to the primary's daemon spawn through the
 /// client's forwarded `--fake-lt` argument (see `connection.rs`): the
@@ -132,24 +131,14 @@ fn second_real_launch_stands_down_against_the_first() {
 // Process plumbing
 // ----------------------------------------------------------------------
 
-fn socket_addr() -> SocketAddr {
-    // Mirrors single_instance.rs's own address construction; the constant is
-    // short enough that this cannot fail.
-    SocketAddr::from_abstract_name(SOCKET_NAME).expect("socket name is short and valid")
-}
-
-/// Ensures the guard socket is free this very moment, by trying to own it
-/// and releasing it again. Any failure message names the likely owner.
+/// Ensures no primary instance is already running by attempting to notify
+/// it. If a primary responds, another Rhesis is already active.
 fn assert_socket_is_free() {
-    match UnixListener::bind_addr(&socket_addr()) {
-        // Dropping the listener releases the abstract name again, so the
-        // primary child can bind it first.
-        Ok(listener) => drop(listener),
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => panic!(
+    if ping_primary() {
+        panic!(
             "the single-instance socket name is already owned — is another \
              Rhesis running? stop it before running this tier"
-        ),
-        Err(e) => panic!("failed to probe the single-instance socket: {e:?}"),
+        );
     }
 }
 
@@ -174,10 +163,11 @@ fn launch(role: &str, args: &[&str]) -> Child {
 fn wait_for_listener(timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
-        match UnixStream::connect_addr(&socket_addr()) {
-            Ok(_) => return,
-            Err(_) if Instant::now() < deadline => {}
-            Err(e) => panic!("the primary never offered the single-instance socket ({e:?})"),
+        if ping_primary() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("the primary never offered the single-instance socket");
         }
         std::thread::sleep(POLL);
     }

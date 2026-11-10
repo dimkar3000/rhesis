@@ -28,6 +28,21 @@ unsafe impl Sync for JobHandle {}
 
 static JOB: OnceLock<Result<JobHandle, String>> = OnceLock::new();
 
+/// Make `child` die together with this process.
+pub fn kill_child_on_exit(child: &Child) -> Result<(), String> {
+    let job = JOB.get_or_init(create_job).as_ref().map_err(Clone::clone)?;
+
+    // SAFETY: both handles are valid; the child handle stays owned by `child`.
+    let ok = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) };
+    if ok == 0 {
+        return Err(format!(
+            "AssignProcessToJobObject failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
 fn create_job() -> Result<JobHandle, String> {
     // SAFETY: null attributes and name are valid arguments (anonymous job
     // with default security).
@@ -60,19 +75,4 @@ fn create_job() -> Result<JobHandle, String> {
         ));
     }
     Ok(JobHandle(job))
-}
-
-/// Make `child` die together with this process.
-pub fn kill_child_on_exit(child: &Child) -> Result<(), String> {
-    let job = JOB.get_or_init(create_job).as_ref().map_err(Clone::clone)?;
-
-    // SAFETY: both handles are valid; the child handle stays owned by `child`.
-    let ok = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) };
-    if ok == 0 {
-        return Err(format!(
-            "AssignProcessToJobObject failed: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
 }

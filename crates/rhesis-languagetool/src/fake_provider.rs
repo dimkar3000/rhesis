@@ -9,15 +9,6 @@ use crate::{
     client::map_dto, color_rules::ColorRules, constants::FIXTURE_DIR, dto::LanguageToolDto,
 };
 
-#[derive(serde::Deserialize)]
-struct FixtureEntry {
-    text: String,
-    #[serde(default)]
-    response: Option<LanguageToolDto>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
 pub(crate) struct FakeProvider {
     /// input text → canned answer; an `Err` entry reports an outage.
     entries: HashMap<String, Result<Vec<Recommendation>, String>>,
@@ -90,6 +81,15 @@ impl FakeProvider {
     pub(crate) fn address(&self) -> &str {
         &self.address
     }
+}
+
+#[derive(serde::Deserialize)]
+struct FixtureEntry {
+    text: String,
+    #[serde(default)]
+    response: Option<LanguageToolDto>,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[cfg(test)]

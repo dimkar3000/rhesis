@@ -14,6 +14,7 @@ use rhesis::constants::{DEFAULT_QUICK_STYLE, ROOT_QML_SOURCE};
 use rhesis::interop::bridge;
 use rhesis_platform::autostart;
 use rhesis_platform::constants::{APP_ID, HIDDEN_FLAG};
+use rhesis_platform::install::InstallationSetup;
 use rhesis_platform::resources::translations_dir;
 use rhesis_platform::single_instance;
 
@@ -25,10 +26,6 @@ lazy_static! {
         ROOT_QML_SOURCE
     ));
     static ref LOGO_PATH: QString = QString::from(":/icons/hicolor/256x256/apps/logo.png");
-}
-
-fn main() {
-    run_ui();
 }
 
 fn run_ui() {
@@ -91,7 +88,8 @@ fn run_ui() {
     // before any of our code runs — so the first launch after moving the
     // file must be a manual one (toggling autostart on off→on would also
     // rewrite it, but the heal makes that unnecessary).
-    autostart::self_heal();
+    let record = InstallationSetup::ensure().and_then(|setup| setup.autostart_record);
+    autostart::autostart_self_heal(record.as_deref());
 
     bridge::ffi::setupIconTheme();
 
@@ -140,4 +138,8 @@ fn run_ui() {
         bridge::ffi::appSetWindowIcon(app.as_mut(), &LOGO_PATH);
         app.exec();
     }
+}
+
+fn main() {
+    run_ui();
 }

@@ -22,29 +22,6 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::TEST_ID;
 
-extern "C" {
-    fn rhesis_quick_test_main(
-        argc: c_int,
-        argv: *mut *mut c_char,
-        name: *const c_char,
-        source_dir: *const c_char,
-    ) -> c_int;
-}
-
-/// Test suite directory handed to Quick Test; every `tst_*.qml` inside is a
-/// separate suite.
-fn suite_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui")
-}
-
-/// The sandbox lives inside the build frame so `cargo clean`-adjacent churn
-/// never pollutes a real user configuration, and failing runs leave their
-/// state around for inspection (it is truncated at every launch).
-#[cfg(unix)]
-fn sandbox_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("build/ui-tests/harness-env")
-}
-
 /// Runs Qt Quick Test over the suites under [`suite_root`], guaranteeing
 /// hermeticity first: the in-process fake daemon is started and pinned to
 /// the runner's socket (`RHESIS_SERVICE_SOCKET`, set before any client can
@@ -123,6 +100,29 @@ pub fn run_suites() -> i32 {
             suite_dir.as_ptr(),
         )
     }
+}
+
+extern "C" {
+    fn rhesis_quick_test_main(
+        argc: c_int,
+        argv: *mut *mut c_char,
+        name: *const c_char,
+        source_dir: *const c_char,
+    ) -> c_int;
+}
+
+/// Test suite directory handed to Quick Test; every `tst_*.qml` inside is a
+/// separate suite.
+fn suite_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui")
+}
+
+/// The sandbox lives inside the build frame so `cargo clean`-adjacent churn
+/// never pollutes a real user configuration, and failing runs leave their
+/// state around for inspection (it is truncated at every launch).
+#[cfg(unix)]
+fn sandbox_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("build/ui-tests/harness-env")
 }
 
 /// Builds the CLI Quick Test expects: argv[0] is the process name, an

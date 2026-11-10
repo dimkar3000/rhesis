@@ -21,29 +21,6 @@ use crate::ini;
 
 use crate::constants::SCHEMA_VERSION;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct DiskStore {
-    schema_version: u32,
-    /// One-time marker: the v1 store was seeded from the legacy QSettings
-    /// INI. Informational for the migration logic (once a store file
-    /// exists, the INI is never consulted again — see `load`).
-    #[serde(default)]
-    migrated_v1: bool,
-    settings: Settings,
-}
-
-enum LoadFailure {
-    /// No store file yet — the normal first boot.
-    NoFile,
-    /// A store file exists but cannot be trusted (unreadable or unparsable).
-    Unreadable(String),
-}
-
-enum MigrationSeed {
-    None,
-    LegacyIni(PathBuf),
-}
-
 #[derive(Debug)]
 pub enum SaveError {
     /// A transient store has nowhere to write (no configuration root).
@@ -275,6 +252,29 @@ impl Store {
         );
         let _ = std::fs::rename(&self.path, corrupt);
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiskStore {
+    schema_version: u32,
+    /// One-time marker: the v1 store was seeded from the legacy QSettings
+    /// INI. Informational for the migration logic (once a store file
+    /// exists, the INI is never consulted again — see `load`).
+    #[serde(default)]
+    migrated_v1: bool,
+    settings: Settings,
+}
+
+enum LoadFailure {
+    /// No store file yet — the normal first boot.
+    NoFile,
+    /// A store file exists but cannot be trusted (unreadable or unparsable).
+    Unreadable(String),
+}
+
+enum MigrationSeed {
+    None,
+    LegacyIni(PathBuf),
 }
 
 /// `<name>.json.tmp` next to the store file (same directory → same

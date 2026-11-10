@@ -50,6 +50,7 @@ use cxx_qt_lib::{QGuiApplication, QQuickStyle, QString};
 use cxx_qt_lib_extras::{QApplication, QEventLoop};
 use rhesis::interop::bridge;
 use rhesis_platform::autostart;
+use rhesis_platform::install::InstallationSetup;
 use rhesis_platform::resources::translations_dir;
 use rhesis_platform::single_instance;
 
@@ -192,8 +193,10 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     bridge::ffi::setBackgroundBehavior(snapshot.background);
 
     // Production parity: under $APPIMAGE the heal repoints the autostart
-    // entry; in this sandbox it is a no-op.
-    autostart::self_heal();
+    // entry; in this sandbox it is a no-op (dev/test resolution yields no
+    // autostart record, so the heal refuses before touching anything).
+    let record = InstallationSetup::ensure().and_then(|setup| setup.autostart_record);
+    autostart::autostart_self_heal(record.as_deref());
 
     bridge::ffi::setupIconTheme();
 

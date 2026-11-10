@@ -29,6 +29,142 @@ use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, FrameError,
 
 use crate::constants::*;
 
+/// Frames delivered from the daemon, plus the client-local session-lost
+/// event. This is the fan-out's whole input contract.
+pub enum ConnectionEvent {
+    Wire(DaemonMsg),
+    /// The session ended (daemon gone, stale version, frame garbage) and
+    /// no new one is up yet: the UI reports `Disconnected` (code 6) until
+    /// the reconnect replay arrives.
+    Lost,
+}
+
+/// UI requests, one per helper invokable; the connection loop serializes
+/// them onto the socket.
+pub enum Command {
+    Check(String),
+    Start,
+    Stop,
+    Retry,
+    SwitchToRemote(String),
+    SetSettings(Settings),
+    /// Quit the daemon (tray "Quit service" or the final app quit while
+    /// background hosting is off).
+    Shutdown,
+}
+
+/// The handy `Debug` hides long check texts (documents sent per keystroke).
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::Check(text) => {
+                write!(f, "Check({})", text.chars().take(24).collect::<String>())
+            }
+            Command::Start => write!(f, "Start"),
+            Command::Stop => write!(f, "Stop"),
+            Command::Retry => write!(f, "Retry"),
+            Command::SwitchToRemote(address) => write!(f, "SwitchToRemote({address})"),
+            Command::SetSettings(settings) => write!(f, "SetSettings({settings:?})"),
+            Command::Shutdown => write!(f, "Shutdown"),
+        }
+    }
+}
+
+/// Handle the UI holds: what invokedables enqueue is what the loop sends.
+/// Dropping the handle does not shut the daemon down (the mirror's
+/// background-off `Drop` decides that, sending [`Command::Shutdown`]).
+pub struct Connection {
+    commands: Sender<Command>,
+}
+
+impl Connection {
+    /// Start the connection loop. `events` receives every daemon frame and
+    /// every session-lost event until the process ends; the loop thread
+    /// owns them afterwards.
+    pub fn start(events: Sender<ConnectionEvent>) -> Connection {
+        let (commands_tx, commands_rx) = unbounded::<Command>();
+        // A thread-name/style note: this loop is the only thread that ever
+        // touches the socket, which is what the §5 "one wire module" claim
+        // is about.
+        match std::thread::Builder::new()
+            .name("rhesis-connection".to_string())
+            .spawn(move || run_loop(events, commands_rx))
+        {
+            Ok(_) => Connection {
+                commands: commands_tx,
+            },
+            // Degrade to a disconnected UI: the mirror keeps its defaults
+            // and the command channel just buffers (dropped on drop).
+            Err(e) => {
+                log::error!("connection loop spawn failed; running disconnected: {e:?}");
+                Connection {
+                    commands: commands_tx,
+                }
+            }
+        }
+    }
+
+    /// Enqueue a command. Fire-and-forget: the wire never acknowledged
+    /// commands anyway (§3) — the next mirrored snapshot or status frame is
+    /// the confirmation. A dead loop is logged; the buffer is unbounded, so
+    /// bursts of autosave checks can never block a Qt thread.
+    pub fn send(&self, command: Command) {
+        log::trace!("command {command:?}");
+        if let Err(e) = self.commands.send(command) {
+            log::warn!("command dropped, the connection loop is gone: {e:?}");
+        }
+    }
+}
+
+/// Boot-time settings probe (§5 startup re-order): reach a daemon —
+/// spawning the same-install one if none is up — and return its persisted
+/// snapshot, so main.rs can pick language, icon theme and background
+/// behavior BEFORE Qt builds anything. The single-client slot (§3) makes
+/// this strictly sequential: the probe owns the name until it gives up,
+/// then [`Connection::start`] takes over.
+///
+/// `None` boots on protocol defaults; the moment the steady-state loop
+/// completes its first handshake, the replay corrects the mirror.
+pub fn boot_snapshot() -> Option<Settings> {
+    let socket = socket_name();
+    let deadline = Instant::now() + BOOT_BUDGET;
+    let mut spawned = false;
+    while Instant::now() < deadline {
+        match handshake(&socket) {
+            Ok(HandshakeOutcome::Session(stream)) => {
+                if let Some(settings) = read_replay(stream, BOOT_REPLAY_CAP) {
+                    log::info!(
+                        "boot snapshot acquired{}",
+                        if spawned {
+                            " from the spawned daemon"
+                        } else {
+                            ""
+                        }
+                    );
+                    return Some(settings);
+                }
+                return None;
+            }
+            Ok(HandshakeOutcome::Busy) => {
+                // Transient (the single-instance guard makes a real race
+                // near-impossible): boot on defaults; the steady-state loop
+                // replays once the other client leaves.
+                log::debug!("boot probe found the daemon busy with another client");
+                return None;
+            }
+            Ok(HandshakeOutcome::Stale(stream)) => retire_stale(stream),
+            Err(_) => {}
+        }
+        if spawning_allowed() && !spawned {
+            spawn_daemon();
+            spawned = true;
+        }
+        std::thread::sleep(PROBE_SLICE);
+    }
+    log::warn!("no daemon answered the boot probe within {BOOT_BUDGET:?}; booting on defaults");
+    None
+}
+
 /// Socket name: the production name, or the `RHESIS_SERVICE_SOCKET` tier
 /// override (shared with the daemon's `DaemonOptions::production()`).
 pub(crate) fn socket_name() -> String {
@@ -133,93 +269,6 @@ fn grow_backoff(wait: Duration) -> Duration {
     (wait * 2).min(RETRY_MAX)
 }
 
-/// Frames delivered from the daemon, plus the client-local session-lost
-/// event. This is the fan-out's whole input contract.
-pub enum ConnectionEvent {
-    Wire(DaemonMsg),
-    /// The session ended (daemon gone, stale version, frame garbage) and
-    /// no new one is up yet: the UI reports `Disconnected` (code 6) until
-    /// the reconnect replay arrives.
-    Lost,
-}
-
-/// UI requests, one per helper invokable; the connection loop serializes
-/// them onto the socket.
-pub enum Command {
-    Check(String),
-    Start,
-    Stop,
-    Retry,
-    SwitchToRemote(String),
-    SetSettings(Settings),
-    /// Quit the daemon (tray "Quit service" or the final app quit while
-    /// background hosting is off).
-    Shutdown,
-}
-
-/// The handy `Debug` hides long check texts (documents sent per keystroke).
-impl std::fmt::Debug for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Command::Check(text) => {
-                write!(f, "Check({})", text.chars().take(24).collect::<String>())
-            }
-            Command::Start => write!(f, "Start"),
-            Command::Stop => write!(f, "Stop"),
-            Command::Retry => write!(f, "Retry"),
-            Command::SwitchToRemote(address) => write!(f, "SwitchToRemote({address})"),
-            Command::SetSettings(settings) => write!(f, "SetSettings({settings:?})"),
-            Command::Shutdown => write!(f, "Shutdown"),
-        }
-    }
-}
-
-/// Handle the UI holds: what invokedables enqueue is what the loop sends.
-/// Dropping the handle does not shut the daemon down (the mirror's
-/// background-off `Drop` decides that, sending [`Command::Shutdown`]).
-pub struct Connection {
-    commands: Sender<Command>,
-}
-
-impl Connection {
-    /// Start the connection loop. `events` receives every daemon frame and
-    /// every session-lost event until the process ends; the loop thread
-    /// owns them afterwards.
-    pub fn start(events: Sender<ConnectionEvent>) -> Connection {
-        let (commands_tx, commands_rx) = unbounded::<Command>();
-        // A thread-name/style note: this loop is the only thread that ever
-        // touches the socket, which is what the §5 "one wire module" claim
-        // is about.
-        match std::thread::Builder::new()
-            .name("rhesis-connection".to_string())
-            .spawn(move || run_loop(events, commands_rx))
-        {
-            Ok(_) => Connection {
-                commands: commands_tx,
-            },
-            // Degrade to a disconnected UI: the mirror keeps its defaults
-            // and the command channel just buffers (dropped on drop).
-            Err(e) => {
-                log::error!("connection loop spawn failed; running disconnected: {e:?}");
-                Connection {
-                    commands: commands_tx,
-                }
-            }
-        }
-    }
-
-    /// Enqueue a command. Fire-and-forget: the wire never acknowledged
-    /// commands anyway (§3) — the next mirrored snapshot or status frame is
-    /// the confirmation. A dead loop is logged; the buffer is unbounded, so
-    /// bursts of autosave checks can never block a Qt thread.
-    pub fn send(&self, command: Command) {
-        log::trace!("command {command:?}");
-        if let Err(e) = self.commands.send(command) {
-            log::warn!("command dropped, the connection loop is gone: {e:?}");
-        }
-    }
-}
-
 /// What a handshake produced for the caller.
 enum HandshakeOutcome {
     /// Ready session: the daemon answered `Hello { protocol, busy: false }`
@@ -300,55 +349,6 @@ fn read_replay(mut stream: Stream, timeout: Duration) -> Option<Settings> {
             }
         }
     }
-}
-
-/// Boot-time settings probe (§5 startup re-order): reach a daemon —
-/// spawning the same-install one if none is up — and return its persisted
-/// snapshot, so main.rs can pick language, icon theme and background
-/// behavior BEFORE Qt builds anything. The single-client slot (§3) makes
-/// this strictly sequential: the probe owns the name until it gives up,
-/// then [`Connection::start`] takes over.
-///
-/// `None` boots on protocol defaults; the moment the steady-state loop
-/// completes its first handshake, the replay corrects the mirror.
-pub fn boot_snapshot() -> Option<Settings> {
-    let socket = socket_name();
-    let deadline = Instant::now() + BOOT_BUDGET;
-    let mut spawned = false;
-    while Instant::now() < deadline {
-        match handshake(&socket) {
-            Ok(HandshakeOutcome::Session(stream)) => {
-                if let Some(settings) = read_replay(stream, BOOT_REPLAY_CAP) {
-                    log::info!(
-                        "boot snapshot acquired{}",
-                        if spawned {
-                            " from the spawned daemon"
-                        } else {
-                            ""
-                        }
-                    );
-                    return Some(settings);
-                }
-                return None;
-            }
-            Ok(HandshakeOutcome::Busy) => {
-                // Transient (the single-instance guard makes a real race
-                // near-impossible): boot on defaults; the steady-state loop
-                // replays once the other client leaves.
-                log::debug!("boot probe found the daemon busy with another client");
-                return None;
-            }
-            Ok(HandshakeOutcome::Stale(stream)) => retire_stale(stream),
-            Err(_) => {}
-        }
-        if spawning_allowed() && !spawned {
-            spawn_daemon();
-            spawned = true;
-        }
-        std::thread::sleep(PROBE_SLICE);
-    }
-    log::warn!("no daemon answered the boot probe within {BOOT_BUDGET:?}; booting on defaults");
-    None
 }
 
 /// How a session ended, reported to the loop.

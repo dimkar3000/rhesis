@@ -1,17 +1,27 @@
 //! Agnostic platform surface for Rhesis: everything the UI, the service and
 //! the LanguageTool worker need from the host OS, without pulling any Qt or
-//! HTTP/bookskeeping dependencies into the consumers.
+//! HTTP/bookkeeping dependencies into the consumers.
 //!
-//! Per-OS internals stay behind the modules: the Linux single-instance guard
-//! (abstract socket) sits next to the Windows one (mutex + event), and the
-//! Windows job-object custody for child processes is a no-op everywhere else.
+//! The code is organized per OS: `windows/` and `linux/` carry parallel
+//! implementations behind the same module set (`autostart`, `constants`,
+//! `paths`, `process`, `resources`, `single_instance`, plus the Windows-only
+//! `job_object`). The `linux` folder is the `not(windows)` branch, so it
+//! compiles for every non-Windows target.
+//!
+//! One generic re-export keeps the consumer paths OS-neutral:
+//! `rhesis_platform::autostart::is_enabled()` resolves through whichever
+//! folder the target compiles. `job_object` stays crate-internal,
+//! reachable only through `process::kill_child_on_exit`.
+//! `single_instance` is cross-platform and lives at the crate root.
 
-pub mod autostart;
-pub mod constants;
-pub mod paths;
-pub mod process;
-pub mod resources;
+#[cfg(not(windows))]
+mod linux;
+#[cfg(windows)]
+mod windows;
+
 pub mod single_instance;
 
+#[cfg(not(windows))]
+pub use linux::*;
 #[cfg(windows)]
-mod job_object;
+pub use windows::*;

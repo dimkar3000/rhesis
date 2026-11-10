@@ -17,29 +17,6 @@ pub struct CustomHighlighterRust {
     pub(crate) handle: Option<std::thread::JoinHandle<()>>,
 }
 
-/// Qt-side boundary conversion: a `Recommendation` rehydrated from the
-/// daemon becomes the QVariant map the QML suggestion popup reads
-/// (`value`, `tooltip`, ... keys — see the tests at the bottom). Lives
-/// here, not as a `From` impl: both types are foreign now that the
-/// recommendation struct lives in the rhesis-protocol crate.
-pub(crate) fn recommendation_to_variant(r: &Recommendation) -> QVariant {
-    let string_field = |value: &String| QVariant::from(&QString::from(value));
-
-    let mut map = QMap::<QMapPair_QString_QVariant>::default();
-    map.insert(QString::from("value"), string_field(&r.value));
-    map.insert(QString::from("tooltip"), string_field(&r.tooltip));
-    map.insert(QString::from("color"), string_field(&r.color));
-    map.insert(QString::from("rule_id"), string_field(&r.rule_id));
-    map.insert(QString::from("category_id"), string_field(&r.category_id));
-    map.insert(QString::from("language"), string_field(&r.language));
-    map.insert(QString::from("range_start"), QVariant::from(&r.range.start));
-    map.insert(
-        QString::from("range_length"),
-        QVariant::from(&r.range.length),
-    );
-    QVariant::from(&map)
-}
-
 impl CustomHighlighterRust {
     pub fn highlight_block(&self) -> Vec<(i32, i32, QString)> {
         self.recommendations
@@ -51,20 +28,6 @@ impl CustomHighlighterRust {
                 (start, length, color)
             })
             .collect()
-    }
-
-    // Split a status update into the numeric QML code (see
-    // `WorkerStatus::code`: 0 = Stopped, 1 = Starting, 2 = Started,
-    // 3 = Failed, 4 = Connecting, 5 = FailedToRespond) plus the
-    // human-readable failure reason (empty unless the status failed).
-    fn status_to_qml(status: &WorkerStatus) -> (i32, QString) {
-        let reason = match status {
-            WorkerStatus::Failed(reason) | WorkerStatus::FailedToRespond(reason) => {
-                QString::from(reason.as_str())
-            }
-            _ => QString::default(),
-        };
-        (status.code(), reason)
     }
 
     /// Wires this UI to the daemon (Refactor.md §5): the single-instance
@@ -99,7 +62,7 @@ impl CustomHighlighterRust {
                 }
             }
         };
-        if rhesis_platform::single_instance::spawn_runner(show_request).is_none() {
+        if !rhesis_platform::single_instance::spawn_runner(show_request) {
             log::debug!("single-instance runner not spawned");
         }
 
@@ -117,6 +80,43 @@ impl CustomHighlighterRust {
             fan_out_messages(incoming, sink);
         }));
     }
+
+    // Split a status update into the numeric QML code (see
+    // `WorkerStatus::code`: 0 = Stopped, 1 = Starting, 2 = Started,
+    // 3 = Failed, 4 = Connecting, 5 = FailedToRespond) plus the
+    // human-readable failure reason (empty unless the status failed).
+    fn status_to_qml(status: &WorkerStatus) -> (i32, QString) {
+        let reason = match status {
+            WorkerStatus::Failed(reason) | WorkerStatus::FailedToRespond(reason) => {
+                QString::from(reason.as_str())
+            }
+            _ => QString::default(),
+        };
+        (status.code(), reason)
+    }
+}
+
+/// Qt-side boundary conversion: a `Recommendation` rehydrated from the
+/// daemon becomes the QVariant map the QML suggestion popup reads
+/// (`value`, `tooltip`, ... keys — see the tests at the bottom). Lives
+/// here, not as a `From` impl: both types are foreign now that the
+/// recommendation struct lives in the rhesis-protocol crate.
+pub(crate) fn recommendation_to_variant(r: &Recommendation) -> QVariant {
+    let string_field = |value: &String| QVariant::from(&QString::from(value));
+
+    let mut map = QMap::<QMapPair_QString_QVariant>::default();
+    map.insert(QString::from("value"), string_field(&r.value));
+    map.insert(QString::from("tooltip"), string_field(&r.tooltip));
+    map.insert(QString::from("color"), string_field(&r.color));
+    map.insert(QString::from("rule_id"), string_field(&r.rule_id));
+    map.insert(QString::from("category_id"), string_field(&r.category_id));
+    map.insert(QString::from("language"), string_field(&r.language));
+    map.insert(QString::from("range_start"), QVariant::from(&r.range.start));
+    map.insert(
+        QString::from("range_length"),
+        QVariant::from(&r.range.length),
+    );
+    QVariant::from(&map)
 }
 
 /// Delivers daemon frames to the UI thread: suggestions to the highlighter,
@@ -142,53 +142,6 @@ pub(crate) trait MessageSink: Send {
 
     /// Queue the client-local "no session" state (code 6).
     fn send_disconnected(&mut self) -> Result<(), String>;
-}
-
-/// Production sink: queues onto the two UI objects' Qt threads.
-struct QtMessageSink {
-    helper_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::AsyncMessagingHelper>,
-    highlighter_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::CustomHighlighter>,
-}
-
-impl MessageSink for QtMessageSink {
-    fn send_suggestions(&mut self, suggestions: Vec<Recommendation>) -> Result<(), String> {
-        self.highlighter_thread
-            .queue(move |mut highlighter| {
-                highlighter.as_mut().rust_mut().recommendations = suggestions;
-                highlighter.as_mut().rehighlight();
-            })
-            .map_err(|e| format!("error queuing suggestions to the UI thread: {e:?}"))
-    }
-
-    fn send_status(&mut self, status: WorkerStatus) -> Result<(), String> {
-        let (status_code, reason_str) = CustomHighlighterRust::status_to_qml(&status);
-        self.helper_thread
-            .queue(move |mut helper| {
-                helper.as_mut().set_server_status(status_code);
-                helper.as_mut().set_server_status_reason(reason_str);
-            })
-            .map_err(|e| format!("error queuing status to the UI thread: {e:?}"))
-    }
-
-    fn send_settings(&mut self, settings: &Settings) -> Result<(), String> {
-        let settings = settings.clone();
-        self.helper_thread
-            .queue(move |mut helper| {
-                helper.as_mut().apply_settings(&settings);
-            })
-            .map_err(|e| format!("error queuing settings to the UI thread: {e:?}"))
-    }
-
-    fn send_disconnected(&mut self) -> Result<(), String> {
-        self.helper_thread
-            .queue(move |mut helper| {
-                helper
-                    .as_mut()
-                    .set_server_status(CLIENT_STATUS_DISCONNECTED);
-                helper.as_mut().set_server_status_reason(QString::default());
-            })
-            .map_err(|e| format!("error queuing the disconnect state: {e:?}"))
-    }
 }
 
 /// Sole consumer of the connection's event channel: fans each event out to
@@ -239,6 +192,53 @@ pub(crate) fn fan_out_messages<S: MessageSink>(
                 return sink;
             }
         }
+    }
+}
+
+/// Production sink: queues onto the two UI objects' Qt threads.
+struct QtMessageSink {
+    helper_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::AsyncMessagingHelper>,
+    highlighter_thread: cxx_qt::CxxQtThread<crate::interop::bridge::ffi::CustomHighlighter>,
+}
+
+impl MessageSink for QtMessageSink {
+    fn send_suggestions(&mut self, suggestions: Vec<Recommendation>) -> Result<(), String> {
+        self.highlighter_thread
+            .queue(move |mut highlighter| {
+                highlighter.as_mut().rust_mut().recommendations = suggestions;
+                highlighter.as_mut().rehighlight();
+            })
+            .map_err(|e| format!("error queuing suggestions to the UI thread: {e:?}"))
+    }
+
+    fn send_status(&mut self, status: WorkerStatus) -> Result<(), String> {
+        let (status_code, reason_str) = CustomHighlighterRust::status_to_qml(&status);
+        self.helper_thread
+            .queue(move |mut helper| {
+                helper.as_mut().set_server_status(status_code);
+                helper.as_mut().set_server_status_reason(reason_str);
+            })
+            .map_err(|e| format!("error queuing status to the UI thread: {e:?}"))
+    }
+
+    fn send_settings(&mut self, settings: &Settings) -> Result<(), String> {
+        let settings = settings.clone();
+        self.helper_thread
+            .queue(move |mut helper| {
+                helper.as_mut().apply_settings(&settings);
+            })
+            .map_err(|e| format!("error queuing settings to the UI thread: {e:?}"))
+    }
+
+    fn send_disconnected(&mut self) -> Result<(), String> {
+        self.helper_thread
+            .queue(move |mut helper| {
+                helper
+                    .as_mut()
+                    .set_server_status(CLIENT_STATUS_DISCONNECTED);
+                helper.as_mut().set_server_status_reason(QString::default());
+            })
+            .map_err(|e| format!("error queuing the disconnect state: {e:?}"))
     }
 }
 

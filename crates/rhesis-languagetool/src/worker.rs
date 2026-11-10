@@ -115,18 +115,6 @@ impl LanguageToolWorker {
     }
 }
 
-enum Outcome {
-    Continue,
-    Stop,
-}
-
-enum VerifyOutcome {
-    Ready,
-    Timeout(String),
-    Aborted(LanguageToolWorkerEvent),
-    Killed,
-}
-
 impl LanguageToolWorker {
     pub fn start(self) -> Option<WorkerHandles> {
         let event_sender = self.event_sender.clone();
@@ -886,6 +874,18 @@ impl LanguageToolWorker {
              starting without language-detection config"
         );
     }
+}
+
+enum Outcome {
+    Continue,
+    Stop,
+}
+
+enum VerifyOutcome {
+    Ready,
+    Timeout(String),
+    Aborted(LanguageToolWorkerEvent),
+    Killed,
 }
 
 #[cfg(test)]

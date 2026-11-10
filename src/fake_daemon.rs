@@ -38,6 +38,21 @@ use rhesis_protocol::{
 
 use crate::constants::*;
 
+/// Start the fixture on a tier-unique socket name and publish it through
+/// `RHESIS_SERVICE_SOCKET` (set before the first client reads the env, so
+/// the caller must start this first). The pid suffix keeps parallel test
+/// binaries from colliding on one name. Panics when the thread cannot
+/// spawn; a bind failure prints and the tier fails on its own.
+pub fn spawn() -> std::thread::JoinHandle<()> {
+    let socket_name = rhesis_protocol::tier_socket_name("rhesis-fake-service");
+    std::env::set_var("RHESIS_SERVICE_SOCKET", socket_name.clone());
+
+    std::thread::Builder::new()
+        .name("rhesis-fake-daemon".to_string())
+        .spawn(move || run(&socket_name))
+        .expect("spawn the fake daemon thread")
+}
+
 /// The settings the fixture boots with: §-conform defaults, background off
 /// (a suite's `Drop` path never keeps this daemon running).
 fn fixture_settings() -> Settings {
@@ -95,21 +110,6 @@ struct FakeState {
 
 /// The one-client slot: `true` while a session thread owns the socket.
 type Slot = Arc<Mutex<bool>>;
-
-/// Start the fixture on a tier-unique socket name and publish it through
-/// `RHESIS_SERVICE_SOCKET` (set before the first client reads the env, so
-/// the caller must start this first). The pid suffix keeps parallel test
-/// binaries from colliding on one name. Panics when the thread cannot
-/// spawn; a bind failure prints and the tier fails on its own.
-pub fn spawn() -> std::thread::JoinHandle<()> {
-    let socket_name = rhesis_protocol::tier_socket_name("rhesis-fake-service");
-    std::env::set_var("RHESIS_SERVICE_SOCKET", socket_name.clone());
-
-    std::thread::Builder::new()
-        .name("rhesis-fake-daemon".to_string())
-        .spawn(move || run(&socket_name))
-        .expect("spawn the fake daemon thread")
-}
 
 /// The fixture's whole life: bind, accept forever. Nothing here ever
 /// returns — tiers share one process, so the daemon dies with the test

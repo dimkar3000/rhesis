@@ -24,17 +24,17 @@ pub struct ParsedIni {
 }
 
 impl ParsedIni {
-    fn section_mut(&mut self, name: &str) -> &mut BTreeMap<String, String> {
-        let lowercase = name.to_lowercase();
-        self.sections.entry(lowercase).or_default()
-    }
-
     /// The `[General]` section, or nothing when the file has none.
     pub fn general(&self) -> &BTreeMap<String, String> {
         static EMPTY: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
         self.sections
             .get("general")
             .unwrap_or_else(|| EMPTY.get_or_init(BTreeMap::new))
+    }
+
+    fn section_mut(&mut self, name: &str) -> &mut BTreeMap<String, String> {
+        let lowercase = name.to_lowercase();
+        self.sections.entry(lowercase).or_default()
     }
 }
 
@@ -132,56 +132,6 @@ pub fn settings_from_ini(ini: &ParsedIni, warn: &mut dyn FnMut(&str)) -> Setting
     settings
 }
 
-/// `true`/`false` or the fallback with a warning (QML wrote plain bools).
-fn parse_bool_value(raw: &str, fallback: bool, key: &str, warn: &mut dyn FnMut(&str)) -> bool {
-    match decode_plain_string(raw) {
-        Some(v) if v == "true" => true,
-        Some(v) if v == "false" => false,
-        _ => {
-            warn(&format!(
-                "migration: {key}={raw:?} is not a bool, using the default"
-            ));
-            fallback
-        }
-    }
-}
-
-/// Named escape table, byte-identical to `iniUnescapedStringList` in Qt's
-/// qsettings.cpp (`\0` is spelled via the octal branch there; same byte).
-fn named_escape(c: char) -> Option<u8> {
-    let byte = match c {
-        'a' => 0x07,
-        'b' => 0x08,
-        'f' => 0x0C,
-        'n' => 0x0A,
-        'r' => 0x0D,
-        't' => 0x09,
-        'v' => 0x0B,
-        '0' => 0x00,
-        '"' => b'"',
-        '?' => b'?',
-        '\'' => b'\'',
-        '\\' => b'\\',
-        _ => return None,
-    };
-    Some(byte)
-}
-
-/// The `\x` escape the QSettings reader understands: one or two hex digits,
-/// minimal length (`\xe` and `\x43` are what the writer emits — never
-/// zero-padded). Consumes digits from `chars` (positioned after the `x`).
-fn hex_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u8> {
-    let hi = chars.next()?.to_digit(16)?;
-    let mut value = hi;
-    // Greedy second digit: the reader also eats two; a writer byte ≥ 0x10
-    // always shows as two digits, a byte < 0x10 as one.
-    if let Some(lo) = chars.peek().and_then(|&c| c.to_digit(16)) {
-        value = value * 16 + lo;
-        chars.next();
-    }
-    u8::try_from(value).ok()
-}
-
 /// Decode a QSettings plain string value: optional surrounding quotes, then
 /// the escape set of `iniEscapedString`/`iniUnescapedStringList` in Qt's
 /// qsettings.cpp: the named table (`\a \b \f \n \r \t \v \" \' \? \\ \0`),
@@ -263,6 +213,56 @@ pub fn qvariant_string_map(raw: &str) -> Option<BTreeMap<String, String>> {
         return None;
     }
     Some(map)
+}
+
+/// `true`/`false` or the fallback with a warning (QML wrote plain bools).
+fn parse_bool_value(raw: &str, fallback: bool, key: &str, warn: &mut dyn FnMut(&str)) -> bool {
+    match decode_plain_string(raw) {
+        Some(v) if v == "true" => true,
+        Some(v) if v == "false" => false,
+        _ => {
+            warn(&format!(
+                "migration: {key}={raw:?} is not a bool, using the default"
+            ));
+            fallback
+        }
+    }
+}
+
+/// Named escape table, byte-identical to `iniUnescapedStringList` in Qt's
+/// qsettings.cpp (`\0` is spelled via the octal branch there; same byte).
+fn named_escape(c: char) -> Option<u8> {
+    let byte = match c {
+        'a' => 0x07,
+        'b' => 0x08,
+        'f' => 0x0C,
+        'n' => 0x0A,
+        'r' => 0x0D,
+        't' => 0x09,
+        'v' => 0x0B,
+        '0' => 0x00,
+        '"' => b'"',
+        '?' => b'?',
+        '\'' => b'\'',
+        '\\' => b'\\',
+        _ => return None,
+    };
+    Some(byte)
+}
+
+/// The `\x` escape the QSettings reader understands: one or two hex digits,
+/// minimal length (`\xe` and `\x43` are what the writer emits — never
+/// zero-padded). Consumes digits from `chars` (positioned after the `x`).
+fn hex_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u8> {
+    let hi = chars.next()?.to_digit(16)?;
+    let mut value = hi;
+    // Greedy second digit: the reader also eats two; a writer byte ≥ 0x10
+    // always shows as two digits, a byte < 0x10 as one.
+    if let Some(lo) = chars.peek().and_then(|&c| c.to_digit(16)) {
+        value = value * 16 + lo;
+        chars.next();
+    }
+    u8::try_from(value).ok()
 }
 
 /// BE `u32` taken from the front of `cursor`, which then advances.
