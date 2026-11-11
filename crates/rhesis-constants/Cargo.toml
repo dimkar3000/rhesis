@@ -1,0 +1,6 @@
+[package]
+name = "rhesis-constants"
+description = "Contract constants shared across the Rhesis crates: wire version, service socket name, factory LanguageTool port"
+version.workspace = true
+edition.workspace = true
+license.workspace = true

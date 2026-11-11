@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::constants::DEFAULT_PORT;
 use crate::settings::Settings;
+use rhesis_constants::DEFAULT_PORT;
 
 /// A parsed INI: section names lowercased (QSettings matches them without
 /// case), keys and values as written (values unescaped on demand).

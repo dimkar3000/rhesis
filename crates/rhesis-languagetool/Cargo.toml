@@ -17,9 +17,9 @@ serde_json.workspace = true
 tokio.workspace = true
 rhesis-platform = { path = "../rhesis-platform" }
 # Shared wire/payload types (Recommendation) live upstream; the embedded
-# server's factory port default comes from the settings crate.
+# server's factory port default comes from the constants crate.
 rhesis-protocol = { path = "../rhesis-protocol" }
-rhesis-settings = { path = "../rhesis-settings" }
+rhesis-constants = { path = "../rhesis-constants" }
 
 # Test targets are declared explicitly: the files live in tests/unit/ (the
 # fixture directory tests/fixtures/ holds no Rust), so cargo cannot

@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_constants::DEFAULT_PORT;
 use rhesis_settings::settings::Settings;
 use rhesis_settings::store::Store;
 

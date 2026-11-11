@@ -24,7 +24,7 @@ use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName as _};
 use interprocess::TryClone as _;
 
-use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
+use rhesis_constants::{PROTOCOL, SERVICE_SOCKET_NAME};
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::{read_frame, write_frame};

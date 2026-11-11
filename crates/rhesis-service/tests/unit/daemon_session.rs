@@ -8,7 +8,7 @@ use std::{
 
 use interprocess::local_socket::{traits::Stream as _, GenericNamespaced, Stream, ToNsName as _};
 
-use rhesis_protocol::constants::PROTOCOL;
+use rhesis_constants::PROTOCOL;
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::recommendation::{Range, Recommendation};

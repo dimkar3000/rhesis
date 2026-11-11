@@ -31,7 +31,7 @@ use interprocess::local_socket::{
 };
 use interprocess::TryClone as _;
 
-use rhesis_protocol::constants::PROTOCOL;
+use rhesis_constants::PROTOCOL;
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::recommendation::{Range, Recommendation};
 use rhesis_protocol::{read_frame, write_frame};

@@ -23,8 +23,8 @@ use crossbeam::channel::{unbounded, Receiver, Sender};
 use interprocess::{local_socket::Stream, TryClone};
 use serde::{Deserialize, Serialize};
 
+use rhesis_constants::PROTOCOL;
 use rhesis_languagetool::service::{LanguageToolWorkerEvent, ServiceMessage};
-use rhesis_protocol::constants::PROTOCOL;
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::{read_frame, write_frame};
 use rhesis_settings::settings::Settings;

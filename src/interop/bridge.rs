@@ -225,7 +225,7 @@ use std::pin::Pin;
 use crate::connection::ClientMsg;
 use crate::interop::async_messaging_helper::{color_settings_to_variant, variant_to_settings};
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
-use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_constants::DEFAULT_PORT;
 use rhesis_settings::settings::Settings;
 
 pub(super) type AsyncMessagingHelperRust =

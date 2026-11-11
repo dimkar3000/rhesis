@@ -10,7 +10,6 @@
 //!   translation, relay.
 
 pub mod config;
-mod constants;
 pub mod daemon;
 pub mod session;
 

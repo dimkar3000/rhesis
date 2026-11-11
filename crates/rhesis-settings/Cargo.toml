@@ -9,6 +9,8 @@ license.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# The factory port default and its migration fallback are contract values.
+rhesis-constants = { path = "../rhesis-constants" }
 rhesis-platform = { path = "../rhesis-platform" }
 
 # Test targets are declared explicitly: the files live in tests/unit/ (the

@@ -7,11 +7,13 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
-use rhesis_protocol::constants::{FRAME_CAP, PROTOCOL, SERVICE_SOCKET_NAME};
+use rhesis_constants::PROTOCOL;
+use rhesis_constants::SERVICE_SOCKET_NAME;
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::recommendation::{Range, Recommendation};
 use rhesis_protocol::tier_socket_name;
+use rhesis_protocol::FRAME_CAP;
 use rhesis_protocol::{read_frame, write_frame};
 use rhesis_settings::settings::Settings;
 

@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::constants::DEFAULT_PORT;
+use rhesis_constants::DEFAULT_PORT;
 use serde::{Deserialize, Serialize};
 
 /// User-adjustable state the daemon owns: persisted by the settings store,

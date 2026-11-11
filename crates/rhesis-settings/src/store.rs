@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ini;
 
-use crate::constants::SCHEMA_VERSION;
+/// Current on-disk schema version. Bumped when the store layout changes;
+/// the wire keeps its own protocol version (`PROTOCOL` in rhesis-constants).
+pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub enum SaveError {

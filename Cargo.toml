@@ -26,11 +26,13 @@ serde = { workspace = true }
 interprocess = "2"
 
 rhesis-platform = { path = "crates/rhesis-platform" }
+rhesis-constants = { path = "crates/rhesis-constants" }
 rhesis-protocol = { path = "crates/rhesis-protocol" }
 rhesis-settings = { path = "crates/rhesis-settings" }
 
 [workspace]
 members = [
+    "crates/rhesis-constants",
     "crates/rhesis-platform",
     "crates/rhesis-languagetool",
     "crates/rhesis-protocol",

@@ -10,6 +10,8 @@ serde.workspace = true
 # The `Settings` snapshot payload is owned by the settings store crate; the
 # wire frames reference it.
 rhesis-settings = { path = "../rhesis-settings" }
+# Wire version, socket name and factory port are contract vocabulary.
+rhesis-constants = { path = "../rhesis-constants" }
 # Frame bytes are postcard; `use-std` unlocks std-based serialization
 # (collections, to_vec) — the one justified feature flag (Refactor.md §8).
 postcard = { version = "1.1", features = ["use-std"] }

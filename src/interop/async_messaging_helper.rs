@@ -12,7 +12,7 @@ use cxx_qt_lib::{QMap, QMapPair_QString_QVariant, QString, QVariant};
 
 use crate::connection::Connection;
 use crate::constants::CLIENT_STATUS_DISCONNECTED;
-use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_constants::DEFAULT_PORT;
 use rhesis_settings::settings::Settings;
 
 /// The mirror object behind QML's `messagingHelper`. Field set = the

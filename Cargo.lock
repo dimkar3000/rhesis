@@ -1568,6 +1568,7 @@ dependencies = [
  "interprocess",
  "lazy_static",
  "log",
+ "rhesis-constants",
  "rhesis-platform",
  "rhesis-protocol",
  "rhesis-settings",
@@ -1576,15 +1577,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rhesis-constants"
+version = "0.6.0"
+
+[[package]]
 name = "rhesis-languagetool"
 version = "0.6.0"
 dependencies = [
  "crossbeam",
  "log",
  "reqwest",
+ "rhesis-constants",
  "rhesis-platform",
  "rhesis-protocol",
- "rhesis-settings",
  "serde",
  "serde_json",
  "tokio",
@@ -1604,6 +1609,7 @@ name = "rhesis-protocol"
 version = "0.6.0"
 dependencies = [
  "postcard",
+ "rhesis-constants",
  "rhesis-settings",
  "serde",
 ]
@@ -1617,6 +1623,7 @@ dependencies = [
  "env_logger",
  "interprocess",
  "log",
+ "rhesis-constants",
  "rhesis-languagetool",
  "rhesis-platform",
  "rhesis-protocol",
@@ -1631,6 +1638,7 @@ name = "rhesis-settings"
 version = "0.6.0"
 dependencies = [
  "log",
+ "rhesis-constants",
  "rhesis-platform",
  "serde",
  "serde_json",

@@ -29,17 +29,21 @@ use interprocess::local_socket::{
     ToNsName as _,
 };
 
+use rhesis_constants::{PROTOCOL, SERVICE_SOCKET_NAME};
 use rhesis_languagetool::service::{
     LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, WorkerStatus,
 };
-use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::write_frame;
 use rhesis_settings::settings::Settings;
 use rhesis_settings::store::Store;
 
-use crate::constants::ACCEPT_SLICE;
 use crate::session;
+
+/// How often the accept loop wakes between connection attempts to service
+/// end signals and the grace countdown. Slice only — a connect is answered
+/// within this window; the session itself is fully synchronous.
+const ACCEPT_SLICE: Duration = Duration::from_millis(50);
 
 /// Daemon configuration, resolved once per process. `production()` is what
 /// the binary runs; tiers build their own with pinned paths and a short
