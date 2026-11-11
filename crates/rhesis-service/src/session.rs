@@ -30,8 +30,8 @@ use rhesis_protocol::{read_frame, write_frame};
 use rhesis_settings::settings::Settings;
 
 use crate::{
-    config::worker_events,
     daemon::{DaemonState, SessionEnd},
+    settings_diff_to_worker_events::settings_diff_to_worker_events,
 };
 
 /// The daemon's parse of the client's request frames: the same variants in
@@ -156,7 +156,7 @@ fn serve(
     // window it is (usually) empty — the running JVM keeps running.
     let events = {
         let applied = state.applied.lock().unwrap();
-        worker_events(applied.as_ref(), &stored)
+        settings_diff_to_worker_events(applied.as_ref(), &stored)
     };
     dispatch(state, events);
     *state.applied.lock().unwrap() = Some(stored);
@@ -201,7 +201,7 @@ fn serve(
                 // Locked order (§1): persist, mirror, then events.
                 let events = {
                     let applied = state.applied.lock().unwrap();
-                    worker_events(applied.as_ref(), &new_settings)
+                    settings_diff_to_worker_events(applied.as_ref(), &new_settings)
                 };
                 {
                     if state.persist {

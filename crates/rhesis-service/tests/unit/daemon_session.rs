@@ -14,7 +14,10 @@ use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::recommendation::{Range, Recommendation};
 use rhesis_protocol::tier_socket_name;
 use rhesis_protocol::{read_frame, write_frame};
-use rhesis_service::{config::worker_events, session::ClientMsg, DaemonOptions};
+use rhesis_service::{
+    daemon::DaemonOptions, session::ClientMsg,
+    settings_diff_to_worker_events::settings_diff_to_worker_events,
+};
 use rhesis_settings::settings::Settings;
 
 /// The flattened wire codes of the statuses where requests may be sent
@@ -116,11 +119,7 @@ impl DaemonPod {
 
         let options = DaemonOptions {
             socket_name: socket_name.clone(),
-            store_path: Some(store_path),
-            // Hermeticity rule: pin the legacy INI to a path that does not
-            // exist in the sandbox — `None` would resolve through the real
-            // user configuration.
-            ini_path: Some(sandbox.join("no-such-qsettings.conf")),
+            store_path,
             idle_grace: grace,
             // The fake provider comes through the options now; no environment.
             fake_fixture: Some(FAKE_LT.to_string()),
@@ -131,7 +130,7 @@ impl DaemonPod {
         let handle = std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
-                let outcome = rhesis_service::run(&options);
+                let outcome = rhesis_service::daemon::run(&options);
                 *slot.lock().unwrap() = Some(outcome);
             })
             .expect("daemon thread spawned");
@@ -599,7 +598,7 @@ fn garbage_first_frame_is_refused_and_the_daemon_recovers() {
 #[test]
 fn reconnect_equal_settings_sends_no_extra_worker_frames() {
     assert!(
-        worker_events(Some(&Settings::default()), &Settings::default()).is_empty(),
+        settings_diff_to_worker_events(Some(&Settings::default()), &Settings::default()).is_empty(),
         "the pure half of the contract is still true"
     );
 }

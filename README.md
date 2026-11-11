@@ -77,7 +77,7 @@ Download from the [releases page](https://github.com/dimkar3000/rhesis/releases)
   `Rhesis\rhesis.exe`.
 
 Both bundle LanguageTool and a trimmed Java runtime, so nothing else is
-required. Settings live in `%APPDATA%\rhesis\Rhesis.ini`. Automatic language
+required. Settings live in `%APPDATA%\rhesis\service.json`. Automatic language
 detection uses LanguageTool's built-in detector (the fastText model is not
 bundled on Windows).
 

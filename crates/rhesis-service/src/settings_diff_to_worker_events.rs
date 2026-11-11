@@ -1,71 +1,48 @@
-//! Settings-translation layer: turning snapshots into worker events.
-//!
-//! The daemon owns every setting (Refactor.md §1), but the LanguageTool
-//! worker only understands a narrow event vocabulary. [`worker_events`]
-//! bridges the two: given what the worker last received (`applied`) and the
-//! snapshot now wanted (`stored`), it produces exactly the events whose
-//! effect on the running server differs. That is what makes a client
-//! reconnecting inside the 5 s idle grace a no-op for the JVM —
-//! [`RestartLocalServer`](LanguageToolWorkerEvent::RestartLocalServer)
-//! always terminates the child first, so an equal snapshot must produce no
-//! events at all (Refactor.md §2) — while a real change does the minimal
-//! thing instead of a full replay.
-//!
-//! Non-worker state (`language`, tooltips, `background`) never produces
-//! events here — the daemon applies those to itself.
-
 use std::collections::BTreeMap;
 
 use rhesis_languagetool::service::LanguageToolWorkerEvent;
 use rhesis_settings::settings::Settings;
 
-/// The worker events that turn `applied` (what the worker last received;
-/// `None` for a freshly spawned worker) into `stored` (the snapshot now
-/// wanted). Order is deterministic: server-target events first, colors
-/// last (colors arrive with a live server and are applied immediately).
-pub fn worker_events(
-    applied: Option<&Settings>,
-    stored: &Settings,
+/// Create a list of the event that convert the the current applied state to the stored state.
+/// If the applied is not provided then cretes a list of event that applied the stored state from scratch
+pub fn settings_diff_to_worker_events(
+    current_settings: Option<&Settings>,
+    target_settings: &Settings,
 ) -> Vec<LanguageToolWorkerEvent> {
     let mut events = Vec::new();
 
-    match applied {
-        // A freshly spawned worker is Stopped in local mode: the first
-        // handshake is the full replay (§2) — start the server on the
-        // stored configuration whatever the port happens to be, since
-        // nothing is running yet.
+    match current_settings {
         None => {
-            if stored.embedded {
-                events.push(LanguageToolWorkerEvent::RestartLocalServer(stored.port));
-            } else if stored.external_address.is_empty() {
+            if target_settings.embedded {
+                events.push(LanguageToolWorkerEvent::RestartLocalServer(
+                    target_settings.port,
+                ));
+            } else if target_settings.external_address.is_empty() {
                 events.push(LanguageToolWorkerEvent::Stop);
             } else {
                 events.push(LanguageToolWorkerEvent::SwitchToRemoteServer(
-                    stored.external_address.clone(),
+                    target_settings.external_address.clone(),
                 ));
             }
         }
         Some(applied) => {
-            // Default colors when the worker got nothing yet; colors are
-            // handled below, shared with the replay.
-            match (applied.embedded, stored.embedded) {
-                // Same mode: only a real drift moves the server. Equal
-                // settings → nothing, exactly what protects the
-                // reconnect-inside-the-grace client's JVM
-                // (RestartLocalServer always terminates the child first).
+            match (applied.embedded, target_settings.embedded) {
+                // Send a restart event to make sure the server is up and running. Used on first start
                 (true, true) => {
-                    if applied.port != stored.port {
-                        events.push(LanguageToolWorkerEvent::RestartLocalServer(stored.port));
+                    if applied.port != target_settings.port {
+                        events.push(LanguageToolWorkerEvent::RestartLocalServer(
+                            target_settings.port,
+                        ));
                     }
                 }
                 (false, false) => {
-                    if applied.external_address != stored.external_address {
-                        if stored.external_address.is_empty() {
+                    if applied.external_address != target_settings.external_address {
+                        if target_settings.external_address.is_empty() {
                             // Cleared address: leave no server running.
                             events.push(LanguageToolWorkerEvent::Stop);
                         } else {
                             events.push(LanguageToolWorkerEvent::SwitchToRemoteServer(
-                                stored.external_address.clone(),
+                                target_settings.external_address.clone(),
                             ));
                         }
                     }
@@ -74,13 +51,15 @@ pub fn worker_events(
                 // configuration, same translation as the settings page
                 // always used.
                 (true, false) | (false, true) => {
-                    if stored.embedded {
-                        events.push(LanguageToolWorkerEvent::RestartLocalServer(stored.port));
-                    } else if stored.external_address.is_empty() {
+                    if target_settings.embedded {
+                        events.push(LanguageToolWorkerEvent::RestartLocalServer(
+                            target_settings.port,
+                        ));
+                    } else if target_settings.external_address.is_empty() {
                         events.push(LanguageToolWorkerEvent::Stop);
                     } else {
                         events.push(LanguageToolWorkerEvent::SwitchToRemoteServer(
-                            stored.external_address.clone(),
+                            target_settings.external_address.clone(),
                         ));
                     }
                 }
@@ -91,10 +70,10 @@ pub fn worker_events(
     // Colors ride along whenever they differ from the worker's current
     // table (a fresh worker still needs its first batch).
     let worker_colors =
-        applied.map_or_else(BTreeMap::default, |applied| applied.color_settings.clone());
-    if worker_colors != stored.color_settings {
+        current_settings.map_or_else(BTreeMap::default, |applied| applied.color_settings.clone());
+    if worker_colors != target_settings.color_settings {
         events.push(LanguageToolWorkerEvent::UpdateColors(
-            stored
+            target_settings
                 .color_settings
                 .iter()
                 .map(|(rule, color)| (rule.clone(), color.clone()))
@@ -133,7 +112,7 @@ mod tests {
     #[test]
     fn first_handshake_replays_the_full_embedded_config() {
         let stored = base();
-        let events = events_of(worker_events(None, &stored));
+        let events = events_of(settings_diff_to_worker_events(None, &stored));
         assert_eq!(
             events,
             vec!["restart:2689", "colors:3 rules"],
@@ -148,7 +127,7 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(
-            events_of(worker_events(None, &stored)),
+            events_of(settings_diff_to_worker_events(None, &stored)),
             vec!["restart:2689"],
             "an empty color table matches the fresh worker's empty table"
         );
@@ -162,7 +141,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(None, &stored)),
+            events_of(settings_diff_to_worker_events(None, &stored)),
             vec!["switch:http://office:8080", "colors:3 rules"]
         );
     }
@@ -175,7 +154,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(None, &stored)),
+            events_of(settings_diff_to_worker_events(None, &stored)),
             vec!["stop", "colors:3 rules"],
             "'remote with no address' leaves no server running"
         );
@@ -185,7 +164,7 @@ mod tests {
     fn reconnect_with_equal_settings_sends_nothing() {
         let stored = base();
         assert!(
-            worker_events(Some(&stored), &stored).is_empty(),
+            settings_diff_to_worker_events(Some(&stored), &stored).is_empty(),
             "the reconnect-within-grace contract: RestartLocalServer would kill the JVM"
         );
     }
@@ -198,7 +177,7 @@ mod tests {
             .color_settings
             .insert("RULE:MY_RULE".to_string(), "#101010".to_string());
 
-        let events = worker_events(Some(&applied), &stored);
+        let events = settings_diff_to_worker_events(Some(&applied), &stored);
         let tagged = events_of(events);
         assert_eq!(
             tagged,
@@ -208,7 +187,7 @@ mod tests {
 
         // And unchanged colors produce nothing at all.
         applied.color_settings = stored.color_settings.clone();
-        assert!(worker_events(Some(&applied), &stored).is_empty());
+        assert!(settings_diff_to_worker_events(Some(&applied), &stored).is_empty());
     }
 
     #[test]
@@ -219,7 +198,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(Some(&applied), &stored)),
+            events_of(settings_diff_to_worker_events(Some(&applied), &stored)),
             vec!["restart:7890"]
         );
     }
@@ -237,7 +216,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(Some(&applied), &stored)),
+            events_of(settings_diff_to_worker_events(Some(&applied), &stored)),
             vec!["switch:http://new:8081"]
         );
     }
@@ -255,7 +234,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(Some(&applied), &stored)),
+            events_of(settings_diff_to_worker_events(Some(&applied), &stored)),
             vec!["stop"]
         );
     }
@@ -269,7 +248,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(Some(&applied), &stored)),
+            events_of(settings_diff_to_worker_events(Some(&applied), &stored)),
             vec!["switch:http://external:9000"]
         );
     }
@@ -286,7 +265,7 @@ mod tests {
             ..base()
         };
         assert_eq!(
-            events_of(worker_events(Some(&applied), &stored)),
+            events_of(settings_diff_to_worker_events(Some(&applied), &stored)),
             vec!["restart:2690"]
         );
     }
@@ -301,6 +280,6 @@ mod tests {
             background: !Settings::default().background,
             ..base()
         };
-        assert!(worker_events(Some(&applied), &stored).is_empty());
+        assert!(settings_diff_to_worker_events(Some(&applied), &stored).is_empty());
     }
 }

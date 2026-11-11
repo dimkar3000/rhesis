@@ -1,23 +1,21 @@
 //! The single source of settings truth: one JSON file, whole-file atomic
-//! writes, lenient reads, and the one-time migration from the pre-service
-//! QSettings INI. On disk:
+//! writes, lenient reads, and quarantine for untrustworthy files. On disk:
 //!
 //! ```json
-//! { "schema_version": 1, "migrated_v1": false, "settings": { ... } }
+//! { "schema_version": 1, "settings": { ... } }
 //! ```
 //!
-//! Error policy: every read failure degrades to defaults (or a migration
-//! seed) with a warning — a broken file must never keep the daemon from
-//! serving text checks. A corrupt file is *renamed* (`.corrupt`), never
-//! deleted, so a human can still see what was wrong.
+//! Error policy: every read failure degrades to defaults with a log line,
+//! never a panic — the daemon must boot to serve text checks even with a
+//! broken file. A missing store is materialized (defaults written once); a
+//! corrupt file is *renamed* (`.corrupt`), never deleted, so a human can
+//! still see what was wrong.
 
-use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
 
-use crate::ini;
+use crate::settings::Settings;
 
 /// Current on-disk schema version. Bumped when the store layout changes;
 /// the wire keeps its own protocol version (`PROTOCOL` in rhesis-constants).
@@ -53,19 +51,13 @@ impl std::error::Error for SaveError {
     }
 }
 
-/// The store: one file path plus the migration marker mirrored in memory
-/// so saves keep the marker as-is. Single-owner by design (the daemon's
-/// settings thread); the marker uses interior mutability to keep `load` on
-/// `&self`.
+/// The store: one file path, single-owner by design (the daemon's settings
+/// thread).
 pub struct Store {
     path: PathBuf,
     /// Environment has no configuration root (Refactor.md §6): the store
     /// never touches the disk — defaults everywhere, saves fail loudly.
     transient: bool,
-    /// INI path override for hermetic tests: `None` resolves through
-    /// `rhesis_platform::paths::qsettings_ini_path`.
-    ini_path: Option<PathBuf>,
-    migrated_v1: Cell<bool>,
 }
 
 impl Store {
@@ -74,8 +66,6 @@ impl Store {
         Store {
             path,
             transient: false,
-            ini_path: None,
-            migrated_v1: Cell::new(false),
         }
     }
 
@@ -88,8 +78,6 @@ impl Store {
         Store {
             path: PathBuf::new(),
             transient: true,
-            ini_path: None,
-            migrated_v1: Cell::new(false),
         }
     }
 
@@ -100,18 +88,10 @@ impl Store {
         rhesis_platform::paths::config_dir().map(|dir| dir.join("service.json"))
     }
 
-    /// Hermetic seam for tests (and for `ui-boot` tiers): pin the INI the
-    /// migration would consult, instead of the real user configuration.
-    pub fn with_ini_path(mut self, ini_path: Option<PathBuf>) -> Store {
-        self.ini_path = ini_path;
-        self
-    }
-
     /// Load the current settings. Order of truth:
     /// 1. a readable, version-matching JSON file;
-    /// 2. a one-time seed from the legacy QSettings INI (persisted so it
-    ///    runs once — the INI is never rewritten, ready for rollback);
-    /// 3. defaults.
+    /// 2. defaults, materialized once so every later load takes the file
+    ///    branch.
     ///
     /// A transient store reads no file and returns plain defaults.
     pub fn load(&self) -> Settings {
@@ -119,27 +99,23 @@ impl Store {
             return Settings::default();
         }
         match self.read_disk() {
-            Ok((settings, migrated_v1)) => {
-                self.migrated_v1.set(migrated_v1);
-                settings
-            }
-            Err(LoadFailure::NoFile) => self.seed_once("no settings store yet"),
+            Ok(settings) => settings,
+            Err(LoadFailure::NoFile) => self.materialize("no settings store yet"),
             Err(LoadFailure::Unreadable(reason)) => {
                 self.quarantine_corrupt(&reason);
-                self.seed_once("corrupt settings store quarantined")
+                self.materialize("corrupt settings store quarantined")
             }
         }
     }
 
     /// Persist `settings` atomically (temp file + rename in the same
-    /// directory). The migration marker stays whatever `load` seeded.
+    /// directory).
     pub fn save(&self, settings: &Settings) -> Result<(), SaveError> {
         if self.transient {
             return Err(SaveError::Transient);
         }
         let disk = DiskStore {
             schema_version: SCHEMA_VERSION,
-            migrated_v1: self.migrated_v1.get(),
             settings: settings.clone(),
         };
 
@@ -162,7 +138,7 @@ impl Store {
         Ok(())
     }
 
-    fn read_disk(&self) -> Result<(Settings, bool), LoadFailure> {
+    fn read_disk(&self) -> Result<Settings, LoadFailure> {
         let contents = match std::fs::read_to_string(&self.path) {
             Ok(contents) => contents,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -184,66 +160,26 @@ impl Store {
                 disk.schema_version,
                 SCHEMA_VERSION
             );
-            return Ok((Settings::default(), disk.migrated_v1));
+            return Ok(Settings::default());
         }
 
-        Ok((disk.settings, disk.migrated_v1))
+        Ok(disk.settings)
     }
 
-    /// Seed once (`migrated_v1` stays false for a fresh defaults store;
-    /// a legacy INI that contributed values marks the store):
-    /// 1. load → seeding happens only when no readable store file exists;
-    /// 2. the seed writes the store immediately, so every later load takes
-    ///    the file branch — even when the INI changes or disappears.
-    fn seed_once(&self, context: &str) -> Settings {
-        let (settings, migrated) = match self.migration_sources() {
-            MigrationSeed::None => (Settings::default(), false),
-            MigrationSeed::LegacyIni(ini_path) => match ini::read_ini(&ini_path) {
-                Ok(parsed) => {
-                    log::info!(
-                        "{context}; migrating legacy keys from {}",
-                        ini_path.display()
-                    );
-                    (
-                        ini::settings_from_ini(&parsed, &mut |warn| log::warn!("{warn}")),
-                        true,
-                    )
-                }
-                Err(e) => {
-                    log::warn!(
-                        "{context}; legacy INI {} exists but is unreadable ({e:?}), \
-                         using defaults",
-                        ini_path.display()
-                    );
-                    (Settings::default(), false)
-                }
-            },
-        };
-
-        self.migrated_v1.set(migrated);
+    /// First boot (or post-quarantine): persist the defaults so the store
+    /// file exists from the start and every later load takes the file
+    /// branch.
+    fn materialize(&self, context: &str) -> Settings {
+        let settings = Settings::default();
         if let Err(e) = self.save(&settings) {
-            log::error!("could not persist the seeded settings store: {e}");
+            log::error!("could not persist the default settings store ({context}): {e}");
         }
         settings
     }
 
-    /// Which legacy source applies: the INI path (pinned or platform
-    /// resolved), only when the file exists. JSON always shadows the INI —
-    /// this fn only runs when the JSON was missing/unreadable anyway.
-    fn migration_sources(&self) -> MigrationSeed {
-        let ini_path = match &self.ini_path {
-            Some(pinned) => Some(pinned.clone()),
-            None => rhesis_platform::paths::qsettings_ini_path(),
-        };
-        match ini_path {
-            Some(ini_path) if ini_path.is_file() => MigrationSeed::LegacyIni(ini_path),
-            _ => MigrationSeed::None,
-        }
-    }
-
     /// Rename an untrustworthy store file to `<path>.corrupt` (best effort)
-    /// so the next `load` takes a fresh seed instead of failing forever,
-    /// and the old bytes stay visible for diagnosis.
+    /// so the next `load` starts fresh instead of failing forever, and the
+    /// old bytes stay visible for diagnosis.
     fn quarantine_corrupt(&self, reason: &str) {
         let corrupt = self.path.with_extension("json.corrupt");
         log::error!(
@@ -259,11 +195,6 @@ impl Store {
 #[derive(Debug, Serialize, Deserialize)]
 struct DiskStore {
     schema_version: u32,
-    /// One-time marker: the v1 store was seeded from the legacy QSettings
-    /// INI. Informational for the migration logic (once a store file
-    /// exists, the INI is never consulted again — see `load`).
-    #[serde(default)]
-    migrated_v1: bool,
     settings: Settings,
 }
 
@@ -272,11 +203,6 @@ enum LoadFailure {
     NoFile,
     /// A store file exists but cannot be trusted (unreadable or unparsable).
     Unreadable(String),
-}
-
-enum MigrationSeed {
-    None,
-    LegacyIni(PathBuf),
 }
 
 /// `<name>.json.tmp` next to the store file (same directory → same

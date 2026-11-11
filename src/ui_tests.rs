@@ -138,7 +138,7 @@ fn collect_runner_arguments() -> Vec<CString> {
 /// Redirects every XDG-style home the process could write (config, data,
 /// caches, sockets, `$HOME`) into a fresh sandbox under
 /// [`sandbox_root`], so suites can freely exercise, e.g., the autostart
-/// desktop files and `QSettings` persistence without ever touching the
+/// desktop files and settings persistence without ever touching the
 /// real user configuration. Must run before Qt is instantiated.
 #[cfg(unix)]
 fn isolate_environment() -> Result<(), String> {

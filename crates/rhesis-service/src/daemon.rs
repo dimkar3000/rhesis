@@ -1,18 +1,3 @@
-//! The daemon process: listener, single-client slot, idle grace, exits.
-//!
-//! Lifecycle (Refactor.md §2/§3): accept connections on a nonblocking
-//! listener so between attempts the daemon can watch the session-end signal
-//! and the idle-grace countdown; exactly one session may run at a time
-//! (second connects get a busy `Connect` and a drop); when the last client
-//! disconnects the daemon waits out the grace window (reconnects cancel it),
-//! unless `background` says to stay alive; on exit — grace, `Shutdown`, or
-//! fatal error — the LanguageTool worker is killed and joined
-//! unconditionally so the embedded JVM never outlives the daemon.
-//!
-//! The worker is spawned in-process; its message receiver is loaned to the
-//! active session and returned on teardown (see the module docs of
-//! [`crate::session`]).
-
 use std::{
     io::ErrorKind,
     path::PathBuf,
@@ -45,23 +30,10 @@ use crate::session;
 /// within this window; the session itself is fully synchronous.
 const ACCEPT_SLICE: Duration = Duration::from_millis(50);
 
-/// Daemon configuration, resolved once per process. `production()` is what
-/// the binary runs; tiers build their own with pinned paths and a short
-/// grace (hermeticity: every path must stay inside the sandbox — the
-/// defaults resolve through the real user configuration otherwise).
 #[derive(Debug, Clone)]
 pub struct DaemonOptions {
-    /// Resolved local-socket name (Linux abstract namespace address).
     pub socket_name: String,
-    /// Explicit store path; `None` resolves through
-    /// [`Store::default_path`], and no configuration root at all means a
-    /// defaults-only transient store.
-    pub store_path: Option<PathBuf>,
-    /// Legacy QSettings INI the one-time migration may consult. Production
-    /// resolves via `rhesis_platform::paths::qsettings_ini_path`; a test
-    /// pins an explicit value (or `None`) and never touches the file.
-    pub ini_path: Option<PathBuf>,
-    /// Idle window after the last client leaves.
+    pub store_path: PathBuf,
     pub idle_grace: Duration,
     /// Recorded fixture id for the fake provider (the binary's `--fake-lt`
     /// argument — passed through by the client harness when the client was
@@ -75,8 +47,7 @@ impl DaemonOptions {
     pub fn production() -> Self {
         DaemonOptions {
             socket_name: SERVICE_SOCKET_NAME.to_string(),
-            store_path: None,
-            ini_path: rhesis_platform::paths::qsettings_ini_path(),
+            store_path: Store::default_path().unwrap_or_default(),
             idle_grace: Duration::from_secs(5),
             // Real LanguageTool server: only the harness seam sets a fixture.
             fake_fixture: None,
@@ -126,25 +97,13 @@ pub struct DaemonState {
 /// returns `Ok(())`.
 pub fn run(options: &DaemonOptions) -> Result<(), String> {
     // 1. Store: the daemon owns the settings file; hermetic callers pin it.
-    //    Without a configuration root the daemon degrades to defaults-only
-    //    (warns once, never persists, never invents a file location).
-    let (store, persist) = match &options.store_path {
-        Some(path) => (
-            Store::open(path.clone()).with_ini_path(options.ini_path.clone()),
-            true,
-        ),
-        None => match Store::default_path() {
-            Some(path) => (
-                Store::open(path).with_ini_path(options.ini_path.clone()),
-                true,
-            ),
-            None => {
-                log::warn!(
-                    "no configuration root; running with default settings, nothing persists"
-                );
-                (Store::transient(), false)
-            }
-        },
+    //    An empty path (no configuration root at construction) runs
+    //    defaults-only: warn once, never persist, never invent a location.
+    let (store, persist) = if options.store_path.as_os_str().is_empty() {
+        log::warn!("no configuration root; running with default settings, nothing persists");
+        (Store::transient(), false)
+    } else {
+        (Store::open(options.store_path.clone()), true)
     };
     let stored = store.load();
 

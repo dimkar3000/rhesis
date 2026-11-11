@@ -113,8 +113,8 @@ fn uninstall_local(flavor: &InstallationFlavor) -> Result<String, String> {
         Err(e) => log::warn!("could not remove the application folder {payload:?}: {e:?}"),
     }
 
-    // The configuration folder: install.conf, the daemon's settings store
-    // and the legacy QSettings INI the migration read from.
+    // The configuration folder: install.conf and the daemon's settings
+    // store (an old install's leftover QSettings INI goes with the folder).
     if let Some(config) = paths::config_dir() {
         match fs::remove_dir_all(&config) {
             Ok(()) => removed.push("the configuration".to_string()),

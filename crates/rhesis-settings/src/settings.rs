@@ -2,9 +2,8 @@
 //! mirrored to the client, and override-able through `SetSettings`.
 //!
 //! The store schema IS this struct (Refactor.md §6) — field-for-field.
-//! JSON keys keep the QML-era names (`embedded`, `externalAddress`, …)
-//! so the migrated store diffs cleanly against the old INI; the wire is
-//! position-driven postcard and ignores the naming.
+//! JSON keys keep the QML-era names (`embedded`, `externalAddress`, …);
+//! the wire is position-driven postcard and ignores the naming.
 
 use std::collections::BTreeMap;
 

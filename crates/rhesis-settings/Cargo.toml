@@ -1,6 +1,6 @@
 [package]
 name = "rhesis-settings"
-description = "Versioned JSON settings store for the Rhesis daemon: defaults, atomic writes, INI migration"
+description = "Versioned JSON settings store for the Rhesis daemon: defaults, atomic writes, quarantine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,13 +9,13 @@ license.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# The factory port default and its migration fallback are contract values.
+# The factory port default is a contract value.
 rhesis-constants = { path = "../rhesis-constants" }
 rhesis-platform = { path = "../rhesis-platform" }
 
-# Test targets are declared explicitly: the files live in tests/unit/ (the
-# fixture directory tests/fixtures/ holds no Rust), so cargo cannot
-# auto-discover them. A new test file needs its [[test]] entry or it never runs.
+# Test targets are declared explicitly: the files live in tests/unit/, so
+# cargo cannot auto-discover them. A new test file needs its [[test]] entry
+# or it never runs.
 [[test]]
 name = "settings-store"
 path = "tests/unit/settings_store.rs"

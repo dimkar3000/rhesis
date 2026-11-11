@@ -53,8 +53,8 @@ type SharedLog = Arc<Mutex<String>>;
 #[test]
 fn second_real_launch_stands_down_against_the_first() {
     // Preconditions: nothing owns the machine-global socket yet, and the
-    // children share the hermetic sandbox (their QSettings and caches live
-    // under build/ui-tests/instance-env).
+    // children share the hermetic sandbox (their configuration and caches
+    // live under build/ui-tests/instance-env).
     assert_socket_is_free();
     if let Err(message) = common::isolate_environment("instance-env") {
         panic!("refusing to run: {message}");
