@@ -66,7 +66,7 @@ fn run_ui() {
             (snapshot.background, snapshot.language.clone())
         }
         None => (
-            rhesis_protocol::Settings::default().background,
+            rhesis_settings::settings::Settings::default().background,
             String::new(),
         ),
     };

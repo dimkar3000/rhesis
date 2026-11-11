@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rhesis_protocol::Recommendation;
+use rhesis_protocol::recommendation::Recommendation;
 
 use crate::{
     client::map_dto, color_rules::ColorRules, constants::FIXTURE_DIR, dto::LanguageToolDto,

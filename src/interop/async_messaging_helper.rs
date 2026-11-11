@@ -11,8 +11,9 @@
 use cxx_qt_lib::{QMap, QMapPair_QString_QVariant, QString, QVariant};
 
 use crate::connection::Connection;
-use rhesis_protocol::constants::{CLIENT_STATUS_DISCONNECTED, DEFAULT_PORT};
-use rhesis_protocol::Settings;
+use crate::constants::CLIENT_STATUS_DISCONNECTED;
+use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_settings::settings::Settings;
 
 /// The mirror object behind QML's `messagingHelper`. Field set = the
 /// `#[qproperty]` declarations in bridge.rs plus the connection handle.
@@ -72,7 +73,7 @@ impl Drop for AsyncMessagingHelperRust {
         }
         if let Some(connection) = &self.connection {
             log::info!("UI is quitting without background hosting; asking the daemon to quit");
-            connection.send(crate::connection::Command::Shutdown);
+            connection.send(crate::connection::ClientMsg::Shutdown);
         }
     }
 }

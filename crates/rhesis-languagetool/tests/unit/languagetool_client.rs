@@ -5,7 +5,7 @@ use std::{
 };
 
 use rhesis_languagetool::client::LanguageToolClient;
-use rhesis_protocol::{Range, Recommendation};
+use rhesis_protocol::recommendation::{Range, Recommendation};
 
 /// Builds a full LanguageTool `/v2/check` response body in exactly the
 /// JSON shape a real server sends — unmodeled sections (`software`,

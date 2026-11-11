@@ -1,13 +1,19 @@
-//! Framing + schema tier: every message variant round-trips through the
-//! real framing, broken frames fail loudly, and the shared types keep their
-//! documented shapes (Refactor.md §9). This tier doubles as the drift
-//! tripwire for the `PROTOCOL` bump rule any type change implies.
+//! Framing + schema tier: every daemon frame and shared payload type
+//! round-trips through the real framing, broken frames fail loudly, and
+//! the shared types keep their documented shapes (Refactor.md §9). This
+//! tier doubles as the drift tripwire for the `PROTOCOL` bump rule any
+//! type change implies.
 
 use std::collections::BTreeMap;
 use std::io::Read;
 
-use rhesis_protocol::constants::{FRAME_CAP, PROTOCOL};
-use rhesis_protocol::{ClientMsg, DaemonMsg, Range, Recommendation, Settings, WorkerStatus};
+use rhesis_protocol::constants::{FRAME_CAP, PROTOCOL, SERVICE_SOCKET_NAME};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::frame_error::FrameError;
+use rhesis_protocol::recommendation::{Range, Recommendation};
+use rhesis_protocol::tier_socket_name;
+use rhesis_protocol::{read_frame, write_frame};
+use rhesis_settings::settings::Settings;
 
 /// Helper: encode a message and read it back through the public framing API.
 fn round_trip<T>(original: T) -> T
@@ -15,8 +21,8 @@ where
     T: serde::Serialize + serde::de::DeserializeOwned + PartialEq,
 {
     let mut wire = Vec::new();
-    rhesis_protocol::write_frame(&mut wire, &original).expect("frame must encode");
-    rhesis_protocol::read_frame(&mut wire.as_slice())
+    write_frame(&mut wire, &original).expect("frame must encode");
+    read_frame(&mut wire.as_slice())
         .expect("frame must decode")
         .expect("a written frame must come back before EOF")
 }
@@ -28,10 +34,9 @@ fn protocol_const_is_v1() {
 
 #[test]
 fn tier_socket_names_are_pid_unique() {
-    let name = rhesis_protocol::tier_socket_name("daemon-session");
+    let name = tier_socket_name("daemon-session");
     assert_ne!(
-        name,
-        rhesis_protocol::constants::SERVICE_SOCKET_NAME,
+        name, SERVICE_SOCKET_NAME,
         "test names must never shadow the production socket"
     );
     assert!(
@@ -40,63 +45,17 @@ fn tier_socket_names_are_pid_unique() {
     );
 }
 
-// --- Per-variant ClientMsg round-trips --------------------------------------
-
-#[test]
-fn client_hello_round_trips() {
-    assert_eq!(
-        round_trip(ClientMsg::Hello { protocol: PROTOCOL }),
-        ClientMsg::Hello { protocol: PROTOCOL }
-    );
-}
-
-#[test]
-fn client_check_round_trips() {
-    assert_eq!(
-        round_trip(ClientMsg::Check {
-            text: "She like football.".to_string(),
-        }),
-        ClientMsg::Check {
-            text: "She like football.".to_string(),
-        }
-    );
-}
-
-#[test]
-fn client_lifecycle_round_trips() {
-    assert_eq!(round_trip(ClientMsg::Start), ClientMsg::Start);
-    assert_eq!(round_trip(ClientMsg::Stop), ClientMsg::Stop);
-    assert_eq!(round_trip(ClientMsg::Retry), ClientMsg::Retry);
-}
-
-#[test]
-fn client_remote_and_shutdown_round_trips() {
-    assert_eq!(
-        round_trip(ClientMsg::SwitchToRemote(
-            "http://192.168.1.10:8081".to_string()
-        )),
-        ClientMsg::SwitchToRemote("http://192.168.1.10:8081".to_string())
-    );
-    assert_eq!(round_trip(ClientMsg::Shutdown), ClientMsg::Shutdown);
-}
-
-#[test]
-fn client_set_settings_round_trips() {
-    let msg = ClientMsg::SetSettings(Settings::default());
-    assert_eq!(round_trip(msg.clone()), msg);
-}
-
 // --- Per-variant DaemonMsg round-trips --------------------------------------
 
 #[test]
-fn daemon_hello_round_trips() {
-    let msg = DaemonMsg::Hello {
+fn daemon_connect_round_trips() {
+    let msg = DaemonMsg::Connect {
         protocol: PROTOCOL,
         busy: false,
     };
     assert_eq!(round_trip(msg.clone()), msg);
 
-    let busy = DaemonMsg::Hello {
+    let busy = DaemonMsg::Connect {
         protocol: PROTOCOL,
         busy: true,
     };
@@ -104,19 +63,21 @@ fn daemon_hello_round_trips() {
 }
 
 #[test]
-fn daemon_status_round_trips_every_variant() {
-    let statuses = [
-        WorkerStatus::Stopped,
-        WorkerStatus::Starting,
-        WorkerStatus::Connecting,
-        WorkerStatus::Started,
-        WorkerStatus::Failed("port 2689 is already in use".to_string()),
-        WorkerStatus::FailedToRespond("no response".to_string()),
-    ];
-    for status in statuses {
-        let msg = DaemonMsg::Status(status.clone());
-        assert_eq!(round_trip(msg.clone()), msg);
+fn daemon_status_round_trips_every_code() {
+    // The daemon-reported status space (the worker crate maps its rich
+    // status onto it; 6 = the client's local Disconnected, never the wire).
+    for code in 0..=5 {
+        let msg = DaemonMsg::Status {
+            code,
+            reason: String::new(),
+        };
+        assert_eq!(round_trip(msg.clone()), msg, "code {code}");
     }
+    let failed = DaemonMsg::Status {
+        code: 3,
+        reason: "port 2689 is already in use".to_string(),
+    };
+    assert_eq!(round_trip(failed.clone()), failed);
 }
 
 #[test]
@@ -158,16 +119,16 @@ fn settings_round_trips_with_custom_rules() {
 }
 
 #[test]
-fn hello_version_mismatch_is_detectable() {
+fn connect_version_mismatch_is_detectable() {
     // A pre-upgrade daemon answers a different version; the client detects
     // the mismatch from the decoded field (compare against PROTOCOL locally).
-    let stale = round_trip(DaemonMsg::Hello {
+    let stale = round_trip(DaemonMsg::Connect {
         protocol: PROTOCOL.checked_sub(1).unwrap_or(99),
         busy: false,
     });
     match stale {
-        DaemonMsg::Hello { protocol, .. } => assert_ne!(protocol, PROTOCOL),
-        _ => panic!("expected a Hello frame"),
+        DaemonMsg::Connect { protocol, .. } => assert_ne!(protocol, PROTOCOL),
+        _ => panic!("expected a Connect frame"),
     }
 }
 
@@ -176,8 +137,8 @@ fn hello_version_mismatch_is_detectable() {
 #[test]
 fn empty_stream_reads_as_clean_close() {
     let mut empty: &[u8] = &[];
-    let closed = rhesis_protocol::read_frame::<ClientMsg>(&mut empty)
-        .expect("EOF at a frame boundary is not an error");
+    let closed =
+        read_frame::<DaemonMsg>(&mut empty).expect("EOF at a frame boundary is not an error");
     assert!(closed.is_none(), "peer closed between messages");
 }
 
@@ -188,8 +149,8 @@ fn torn_header_is_truncated() {
         let mut partial = &slice[..fills];
         assert!(
             matches!(
-                rhesis_protocol::read_frame::<ClientMsg>(&mut partial),
-                Err(rhesis_protocol::FrameError::Truncated)
+                read_frame::<DaemonMsg>(&mut partial),
+                Err(FrameError::Truncated)
             ),
             "{fills}-byte header must not look like a clean close"
         );
@@ -203,8 +164,8 @@ fn torn_payload_is_truncated() {
     wire[0] = 4;
     wire.pop();
     assert!(matches!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut wire.as_slice()),
-        Err(rhesis_protocol::FrameError::Truncated)
+        read_frame::<DaemonMsg>(&mut wire.as_slice()),
+        Err(FrameError::Truncated)
     ));
 }
 
@@ -214,8 +175,8 @@ fn oversized_length_is_rejected_before_reading() {
     header.extend_from_slice(b"payload never allocated");
     assert!(
         matches!(
-            rhesis_protocol::read_frame::<ClientMsg>(&mut header.as_slice()),
-            Err(rhesis_protocol::FrameError::TooLarge { length })
+            read_frame::<DaemonMsg>(&mut header.as_slice()),
+            Err(FrameError::TooLarge { length })
                 if length == FRAME_CAP + 1
         ),
         "the cap must trigger before the payload materializes"
@@ -228,8 +189,8 @@ fn garbage_payload_fails_decode() {
     let mut wire = 2u32.to_le_bytes().to_vec();
     wire.extend_from_slice(&[0xFF, 0xFF]);
     assert!(matches!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut wire.as_slice()),
-        Err(rhesis_protocol::FrameError::Decode(_))
+        read_frame::<DaemonMsg>(&mut wire.as_slice()),
+        Err(FrameError::Decode(_))
     ));
 }
 
@@ -238,29 +199,46 @@ fn zero_length_frame_fails_decode() {
     // Header claims a zero-length payload: EOF instantly, no enum bytes.
     let wire = 0u32.to_le_bytes().to_vec();
     assert!(matches!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut wire.as_slice()),
-        Err(rhesis_protocol::FrameError::Decode(_))
+        read_frame::<DaemonMsg>(&mut wire.as_slice()),
+        Err(FrameError::Decode(_))
     ));
 }
 
 #[test]
 fn frames_read_sequentially() {
     let mut wire = Vec::new();
-    rhesis_protocol::write_frame(&mut wire, &ClientMsg::Start).unwrap();
-    rhesis_protocol::write_frame(&mut wire, &ClientMsg::Retry).unwrap();
+    write_frame(
+        &mut wire,
+        &DaemonMsg::Connect {
+            protocol: PROTOCOL,
+            busy: false,
+        },
+    )
+    .unwrap();
+    write_frame(
+        &mut wire,
+        &DaemonMsg::Status {
+            code: 2,
+            reason: String::new(),
+        },
+    )
+    .unwrap();
     let mut cursor = wire.as_slice();
     assert_eq!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut cursor).unwrap(),
-        Some(ClientMsg::Start)
+        read_frame::<DaemonMsg>(&mut cursor).unwrap(),
+        Some(DaemonMsg::Connect {
+            protocol: PROTOCOL,
+            busy: false,
+        })
     );
     assert_eq!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut cursor).unwrap(),
-        Some(ClientMsg::Retry)
+        read_frame::<DaemonMsg>(&mut cursor).unwrap(),
+        Some(DaemonMsg::Status {
+            code: 2,
+            reason: String::new(),
+        })
     );
-    assert_eq!(
-        rhesis_protocol::read_frame::<ClientMsg>(&mut cursor).unwrap(),
-        None
-    );
+    assert_eq!(read_frame::<DaemonMsg>(&mut cursor).unwrap(), None);
 }
 
 // --- Shared type shapes (the old recommendation tier's struct checks) ------
@@ -295,12 +273,12 @@ fn recommendations_map_fixtures_field_for_field() {
 
 fn ser(value: &Settings) -> Vec<u8> {
     let mut wire = Vec::new();
-    rhesis_protocol::write_frame(&mut wire, value).unwrap();
+    write_frame(&mut wire, value).unwrap();
     wire
 }
 
 fn de(mut bytes: &[u8]) -> Settings {
-    rhesis_protocol::read_frame::<Settings>(&mut bytes)
+    read_frame::<Settings>(&mut bytes)
         .expect("frame must decode")
         .expect("non-empty byte source")
 }
@@ -327,7 +305,7 @@ fn framing_survives_byte_granular_streams() {
     let settings = Settings::default();
     let wire = ser(&settings);
     let mut reader = OneByteReader { bytes: &wire };
-    let parsed = rhesis_protocol::read_frame::<Settings>(&mut reader)
+    let parsed = read_frame::<Settings>(&mut reader)
         .expect("frame must decode one byte at a time")
         .expect("complete payload");
     assert_eq!(parsed, settings);

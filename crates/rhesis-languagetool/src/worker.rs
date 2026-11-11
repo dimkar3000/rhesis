@@ -11,7 +11,9 @@ use std::{
 };
 
 use crossbeam::channel::{after, unbounded, Receiver, Sender};
-use rhesis_protocol::{constants::DEFAULT_PORT, WorkerStatus};
+use rhesis_settings::constants::DEFAULT_PORT;
+
+use crate::worker_status::WorkerStatus;
 
 use crate::{
     completion_provider::CompletionProvider,

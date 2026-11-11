@@ -14,7 +14,7 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-use rhesis_protocol::Settings;
+use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
 
 use crate::ini;

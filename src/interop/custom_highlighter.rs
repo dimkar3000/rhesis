@@ -4,11 +4,12 @@ use crossbeam::channel::Receiver;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QMap, QMapPair_QString_QVariant, QString, QVariant};
 
-use rhesis_protocol::{
-    constants::CLIENT_STATUS_DISCONNECTED, DaemonMsg, Recommendation, Settings, WorkerStatus,
-};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::recommendation::Recommendation;
+use rhesis_settings::settings::Settings;
 
 use crate::connection::{Connection, ConnectionEvent};
+use crate::constants::CLIENT_STATUS_DISCONNECTED;
 
 #[derive(Default)]
 pub struct CustomHighlighterRust {
@@ -80,20 +81,6 @@ impl CustomHighlighterRust {
             fan_out_messages(incoming, sink);
         }));
     }
-
-    // Split a status update into the numeric QML code (see
-    // `WorkerStatus::code`: 0 = Stopped, 1 = Starting, 2 = Started,
-    // 3 = Failed, 4 = Connecting, 5 = FailedToRespond) plus the
-    // human-readable failure reason (empty unless the status failed).
-    fn status_to_qml(status: &WorkerStatus) -> (i32, QString) {
-        let reason = match status {
-            WorkerStatus::Failed(reason) | WorkerStatus::FailedToRespond(reason) => {
-                QString::from(reason.as_str())
-            }
-            _ => QString::default(),
-        };
-        (status.code(), reason)
-    }
 }
 
 /// Qt-side boundary conversion: a `Recommendation` rehydrated from the
@@ -134,8 +121,9 @@ pub(crate) trait MessageSink: Send {
     /// is gone; the fan-out loop must stop.
     fn send_suggestions(&mut self, suggestions: Vec<Recommendation>) -> Result<(), String>;
 
-    /// Queue a status update. An `Err` means the UI side is gone.
-    fn send_status(&mut self, status: WorkerStatus) -> Result<(), String>;
+    /// Queue a status update (wire code + failure reason). An `Err` means
+    /// the UI side is gone.
+    fn send_status(&mut self, code: i32, reason: &str) -> Result<(), String>;
 
     /// Queue a settings snapshot mirror.
     fn send_settings(&mut self, settings: &Settings) -> Result<(), String>;
@@ -160,8 +148,8 @@ pub(crate) fn fan_out_messages<S: MessageSink>(
                     return sink;
                 }
             }
-            Ok(ConnectionEvent::Wire(DaemonMsg::Status(status))) => {
-                if let Err(e) = sink.send_status(status) {
+            Ok(ConnectionEvent::Wire(DaemonMsg::Status { code, reason })) => {
+                if let Err(e) = sink.send_status(code, &reason) {
                     log::error!("{e}, stopping the message thread");
                     return sink;
                 }
@@ -172,13 +160,11 @@ pub(crate) fn fan_out_messages<S: MessageSink>(
                     return sink;
                 }
             }
-            // A greeting belongs to a handshake the connection loop already
-            // handled; nothing on an established session should ever carry
-            // one. Log it and keep the channel alive.
-            Ok(ConnectionEvent::Wire(DaemonMsg::Hello { protocol, busy })) => {
-                log::warn!(
-                    "unexpected greeting frame mid-session: protocol={protocol} busy={busy}"
-                );
+            // A connect frame belongs to a handshake the connection loop
+            // already handled; nothing on an established session should ever
+            // carry one. Log it and keep the channel alive.
+            Ok(ConnectionEvent::Wire(DaemonMsg::Connect { protocol, busy })) => {
+                log::warn!("unexpected connect frame mid-session: protocol={protocol} busy={busy}");
             }
             Ok(ConnectionEvent::Lost) => {
                 if let Err(e) = sink.send_disconnected() {
@@ -211,12 +197,12 @@ impl MessageSink for QtMessageSink {
             .map_err(|e| format!("error queuing suggestions to the UI thread: {e:?}"))
     }
 
-    fn send_status(&mut self, status: WorkerStatus) -> Result<(), String> {
-        let (status_code, reason_str) = CustomHighlighterRust::status_to_qml(&status);
+    fn send_status(&mut self, code: i32, reason: &str) -> Result<(), String> {
+        let reason = QString::from(reason);
         self.helper_thread
             .queue(move |mut helper| {
-                helper.as_mut().set_server_status(status_code);
-                helper.as_mut().set_server_status_reason(reason_str);
+                helper.as_mut().set_server_status(code);
+                helper.as_mut().set_server_status_reason(reason);
             })
             .map_err(|e| format!("error queuing status to the UI thread: {e:?}"))
     }
@@ -247,7 +233,11 @@ mod tests {
     use super::*;
     use crate::connection::ConnectionEvent;
     use crossbeam::channel::unbounded;
-    use rhesis_protocol::Range;
+    use rhesis_protocol::recommendation::Range;
+
+    // Wire status codes (DaemonMsg::Status): the fan-out tests' set.
+    const STARTED: i32 = 2;
+    const CONNECTING: i32 = 4;
 
     /// A one-word recommendation at `start` — the minimal suggestion shape
     /// the rendering pipeline consumes (a range to paint + a replacement).
@@ -263,7 +253,7 @@ mod tests {
     #[derive(Debug, PartialEq)]
     enum SpyEvent {
         Suggestions(Vec<Recommendation>),
-        Status(WorkerStatus),
+        Status(i32, String),
         SettingsSnapshot(Settings),
         Disconnected,
     }
@@ -295,11 +285,11 @@ mod tests {
             Ok(())
         }
 
-        fn send_status(&mut self, status: WorkerStatus) -> Result<(), String> {
+        fn send_status(&mut self, code: i32, reason: &str) -> Result<(), String> {
             if self.fail_status {
                 return Err("spy sink: UI thread is gone (status)".to_string());
             }
-            self.events.push(SpyEvent::Status(status));
+            self.events.push(SpyEvent::Status(code, reason.to_string()));
             Ok(())
         }
 
@@ -316,27 +306,6 @@ mod tests {
     }
 
     #[test]
-    fn status_to_qml_maps_codes() {
-        let cases = [
-            (WorkerStatus::Stopped, 0, ""),
-            (WorkerStatus::Starting, 1, ""),
-            (WorkerStatus::Started, 2, ""),
-            (WorkerStatus::Failed("jar broke".into()), 3, "jar broke"),
-            (WorkerStatus::Connecting, 4, ""),
-            (
-                WorkerStatus::FailedToRespond("timeout".into()),
-                5,
-                "timeout",
-            ),
-        ];
-        for (status, code, reason) in cases {
-            let (qcode, qreason) = CustomHighlighterRust::status_to_qml(&status);
-            assert_eq!(qcode, code, "code for {status:?}");
-            assert_eq!(qreason.to_string(), reason, "reason for {status:?}");
-        }
-    }
-
-    #[test]
     fn fan_out_delivers_every_frame_then_stops_on_channel_close() {
         let (sender, receiver) = unbounded::<ConnectionEvent>();
         let sink = SpySink::new();
@@ -347,9 +316,10 @@ mod tests {
             )))
             .unwrap();
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Status(
-                WorkerStatus::Started,
-            )))
+            .send(ConnectionEvent::Wire(DaemonMsg::Status {
+                code: STARTED,
+                reason: String::new(),
+            }))
             .unwrap();
         sender
             .send(ConnectionEvent::Wire(DaemonMsg::Suggestion(vec![
@@ -366,7 +336,7 @@ mod tests {
             sink.events,
             vec![
                 SpyEvent::SettingsSnapshot(Settings::default()),
-                SpyEvent::Status(WorkerStatus::Started),
+                SpyEvent::Status(STARTED, String::new()),
                 SpyEvent::Suggestions(vec![one_word(0, "a"), one_word(2, "b")]),
                 SpyEvent::Disconnected,
             ]
@@ -380,9 +350,10 @@ mod tests {
 
         sender.send(ConnectionEvent::Lost).unwrap();
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Status(
-                WorkerStatus::Connecting,
-            )))
+            .send(ConnectionEvent::Wire(DaemonMsg::Status {
+                code: CONNECTING,
+                reason: String::new(),
+            }))
             .unwrap();
         sender.send(ConnectionEvent::Lost).unwrap();
         drop(sender);
@@ -395,7 +366,7 @@ mod tests {
             sink.events,
             vec![
                 SpyEvent::Disconnected,
-                SpyEvent::Status(WorkerStatus::Connecting),
+                SpyEvent::Status(CONNECTING, String::new()),
                 SpyEvent::Disconnected,
             ]
         );
@@ -415,9 +386,10 @@ mod tests {
             ])))
             .unwrap();
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Status(
-                WorkerStatus::Started,
-            )))
+            .send(ConnectionEvent::Wire(DaemonMsg::Status {
+                code: STARTED,
+                reason: String::new(),
+            }))
             .unwrap();
         drop(sender);
 
@@ -436,9 +408,10 @@ mod tests {
         };
 
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Status(
-                WorkerStatus::Started,
-            )))
+            .send(ConnectionEvent::Wire(DaemonMsg::Status {
+                code: STARTED,
+                reason: String::new(),
+            }))
             .unwrap();
         sender
             .send(ConnectionEvent::Wire(DaemonMsg::Suggestion(vec![
@@ -454,26 +427,27 @@ mod tests {
     }
 
     #[test]
-    fn a_greeting_frame_is_skipped_not_fatal() {
+    fn a_connect_frame_is_skipped_not_fatal() {
         let (sender, receiver) = unbounded::<ConnectionEvent>();
         let sink = SpySink::new();
 
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Hello {
+            .send(ConnectionEvent::Wire(DaemonMsg::Connect {
                 protocol: 1,
                 busy: false,
             }))
             .unwrap();
         sender
-            .send(ConnectionEvent::Wire(DaemonMsg::Status(
-                WorkerStatus::Started,
-            )))
+            .send(ConnectionEvent::Wire(DaemonMsg::Status {
+                code: STARTED,
+                reason: String::new(),
+            }))
             .unwrap();
         drop(sender);
 
         let sink = fan_out_messages(receiver, sink);
 
-        assert_eq!(sink.events, vec![SpyEvent::Status(WorkerStatus::Started)]);
+        assert_eq!(sink.events, vec![SpyEvent::Status(STARTED, String::new())]);
     }
 
     /// A filled-in recommendation covering every field the QML popup reads.

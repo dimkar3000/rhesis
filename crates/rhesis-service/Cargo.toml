@@ -10,6 +10,9 @@ crossbeam.workspace = true
 # The daemon binary's argument parsing (--fake-lt <fixture>).
 clap.workspace = true
 log.workspace = true
+# The session pump parses client frames through its own mirrored request
+# enum (serde derives live here now that the shared one is gone).
+serde.workspace = true
 env_logger = "0.11.11"
 # Local-socket transport (Refactor.md §5): abstract UDS on Linux, named pipe
 # on Windows, behind the schema's SERVICE_SOCKET_NAME.

@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use rhesis_languagetool::service::LanguageToolWorkerEvent;
-use rhesis_protocol::Settings;
+use rhesis_settings::settings::Settings;
 
 /// The worker events that turn `applied` (what the worker last received;
 /// `None` for a freshly spawned worker) into `stored` (the snapshot now

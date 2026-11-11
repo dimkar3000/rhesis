@@ -19,6 +19,7 @@ cxx-qt-lib-extras = { version = "0.9.1" }
 env_logger = "0.11.11"
 lazy_static = "1.5.0"
 log = { workspace = true }
+serde = { workspace = true }
 # Local-socket transport for the daemon connection (Refactor.md §5): the
 # client keeps no tokio and no reqwest; every wire type lives in
 # rhesis-protocol.
@@ -26,6 +27,7 @@ interprocess = "2"
 
 rhesis-platform = { path = "crates/rhesis-platform" }
 rhesis-protocol = { path = "crates/rhesis-protocol" }
+rhesis-settings = { path = "crates/rhesis-settings" }
 
 [workspace]
 members = [

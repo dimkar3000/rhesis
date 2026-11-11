@@ -1,4 +1,4 @@
-use rhesis_protocol::Recommendation;
+use rhesis_protocol::recommendation::Recommendation;
 
 use crate::{client::LanguageToolClient, fake_provider::FakeProvider};
 

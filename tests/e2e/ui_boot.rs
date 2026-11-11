@@ -57,9 +57,9 @@ use rhesis_platform::single_instance;
 /// App id, doubling as the desktop file name (see main.rs).
 const NAMESPACE: &str = "io.github.dimkar3000.rhesis";
 
-/// Worker status codes (see `WorkerStatus::code` in rhesis-protocol); the
-/// fake daemon boots as if its embedded server were already serving, so its
-/// replay settles on Started immediately.
+/// Wire status codes (`DaemonMsg::Status`); the fake daemon boots as if its
+/// embedded server were already serving, so its replay settles on Started
+/// immediately.
 const STATUS_STARTED: i32 = 2;
 
 /// The recorded field text ("checker" fixture) and its clean counterpart.

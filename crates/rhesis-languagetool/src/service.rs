@@ -1,7 +1,7 @@
-use rhesis_protocol::Recommendation;
+use rhesis_protocol::recommendation::Recommendation;
 
 pub use crate::worker::{LanguageToolWorker, LanguageToolWorkerEvent, WorkerHandles};
-pub use rhesis_protocol::WorkerStatus;
+pub use crate::worker_status::WorkerStatus;
 
 #[derive(Debug, Clone)]
 pub enum ServiceMessage {

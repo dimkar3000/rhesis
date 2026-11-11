@@ -21,15 +21,33 @@ use std::{
 
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use interprocess::{local_socket::Stream, TryClone};
+use serde::{Deserialize, Serialize};
 
 use rhesis_languagetool::service::{LanguageToolWorkerEvent, ServiceMessage};
 use rhesis_protocol::constants::PROTOCOL;
-use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, Settings};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::{read_frame, write_frame};
+use rhesis_settings::settings::Settings;
 
 use crate::{
     config::worker_events,
     daemon::{DaemonState, SessionEnd},
 };
+
+/// The daemon's parse of the client's request frames: the same variants in
+/// the same order as the client's enum (postcard tags by index), so a
+/// shape change on either side is a `PROTOCOL` bump on both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ClientMsg {
+    Connect { protocol: u32 },
+    Check { text: String },
+    Start,
+    Stop,
+    Retry,
+    SwitchToRemote(String),
+    SetSettings(Settings),
+    Shutdown,
+}
 
 /// Drive one client session to completion. Ownership of the single-client
 /// slot was already taken by the caller; this releases it exactly once.
@@ -52,24 +70,24 @@ pub fn run_session(
     };
     let write_side = Arc::new(Mutex::new(stream));
 
-    // --- strict handshake: the first frame must be `Hello` ---------------
+    // --- strict handshake: the first frame must be `Connect` -------------
     let handshake = match read_frame::<ClientMsg>(&mut read_side) {
-        Ok(Some(ClientMsg::Hello { protocol })) if protocol == PROTOCOL => {
+        Ok(Some(ClientMsg::Connect { protocol })) if protocol == PROTOCOL => {
             let _ = mirror_frame(
                 &write_side,
-                &DaemonMsg::Hello {
+                &DaemonMsg::Connect {
                     protocol: PROTOCOL,
                     busy: false,
                 },
             );
             true
         }
-        Ok(Some(ClientMsg::Hello { protocol })) => {
+        Ok(Some(ClientMsg::Connect { protocol })) => {
             // The client still needs the daemon's version to detect the
             // mismatch and respawn a matching daemon; answer, then close.
             let _ = mirror_frame(
                 &write_side,
-                &DaemonMsg::Hello {
+                &DaemonMsg::Connect {
                     protocol: PROTOCOL,
                     busy: false,
                 },
@@ -78,7 +96,7 @@ pub fn run_session(
             false
         }
         Ok(Some(message)) => {
-            log::warn!("first client frame is {message:?}, not a Hello; closing");
+            log::warn!("first client frame is {message:?}, not a Connect; closing");
             false
         }
         Ok(None) => {
@@ -122,7 +140,13 @@ fn serve(
         return false;
     }
     let last_status = state.last_status.lock().unwrap().clone();
-    if !mirror_frame(write_side, &DaemonMsg::Status(last_status)) {
+    if !mirror_frame(
+        write_side,
+        &DaemonMsg::Status {
+            code: last_status.code(),
+            reason: last_status.reason(),
+        },
+    ) {
         log::warn!("client dropped during the status replay");
         return false;
     }
@@ -198,8 +222,8 @@ fn serve(
                 *state.applied.lock().unwrap() = Some(new_settings);
             }
             ClientMsg::Shutdown => break true,
-            ClientMsg::Hello { .. } => {
-                log::warn!("second Hello on an established session; closing");
+            ClientMsg::Connect { .. } => {
+                log::warn!("second Connect on an established session; closing");
                 break false;
             }
         }
@@ -292,7 +316,11 @@ fn spawn_relay(
                         Ok(ServiceMessage::StatusChanged(status)) => {
                             *state.last_status.lock().unwrap() = status.clone();
                             let mut stream = write_side.lock().unwrap();
-                            if write_frame(&mut *stream, &DaemonMsg::Status(status)).is_err() {
+                            let frame = DaemonMsg::Status {
+                                code: status.code(),
+                                reason: status.reason(),
+                            };
+                            if write_frame(&mut *stream, &frame).is_err() {
                                 break;
                             }
                         }

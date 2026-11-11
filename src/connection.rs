@@ -1,7 +1,7 @@
 //! The client's single socket-aware module (Refactor.md §5).
 //!
 //! Everything that talks to the daemon lives here: the boot-time probe,
-//! the detached spawning of a same-install daemon, the strict `Hello`
+//! the detached spawning of a same-install daemon, the strict `Connect`
 //! handshake with its retry budget, the persistent connection loop
 //! (reconnect with backoff) and the outbound command path. Every other
 //! module in the Qt tier is wire-blind: the connection loop delivers
@@ -25,7 +25,10 @@ use interprocess::local_socket::{GenericNamespaced, Stream, ToNsName as _};
 use interprocess::TryClone as _;
 
 use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
-use rhesis_protocol::{read_frame, write_frame, ClientMsg, DaemonMsg, FrameError, Settings};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::frame_error::FrameError;
+use rhesis_protocol::{read_frame, write_frame};
+use rhesis_settings::settings::Settings;
 
 use crate::constants::*;
 
@@ -39,14 +42,28 @@ pub enum ConnectionEvent {
     Lost,
 }
 
-/// UI requests, one per helper invokable; the connection loop serializes
-/// them onto the socket.
-pub enum Command {
-    Check(String),
+/// The client's request vocabulary, one per helper invokable; the
+/// connection loop serializes it onto the socket. The daemon parses these
+/// frames through its own mirror enum (same variants, same order —
+/// postcard tags by index), so a shape change here is a `PROTOCOL` bump
+/// mirrored on the daemon side.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ClientMsg {
+    /// Sent first; the daemon answers `DaemonMsg::Connect` with its own
+    /// version + busy flag. Mismatch → the client tears down and respawns.
+    Connect { protocol: u32 },
+    /// Check this text; answers arrive as `DaemonMsg::Suggestion` batches
+    /// (worker debounce applies; checks while down are dropped silently).
+    Check { text: String },
+    /// Start the embedded LanguageTool server.
     Start,
+    /// Stop the embedded LanguageTool server.
     Stop,
+    /// Clear the failure budget and try the current server again.
     Retry,
+    /// Switch to an external LanguageTool at this base URL.
     SwitchToRemote(String),
+    /// Apply a full settings snapshot (persisted, then mirrored back).
     SetSettings(Settings),
     /// Quit the daemon (tray "Quit service" or the final app quit while
     /// background hosting is off).
@@ -54,27 +71,28 @@ pub enum Command {
 }
 
 /// The handy `Debug` hides long check texts (documents sent per keystroke).
-impl std::fmt::Debug for Command {
+impl std::fmt::Debug for ClientMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Command::Check(text) => {
+            ClientMsg::Connect { protocol } => write!(f, "Connect({protocol})"),
+            ClientMsg::Check { text } => {
                 write!(f, "Check({})", text.chars().take(24).collect::<String>())
             }
-            Command::Start => write!(f, "Start"),
-            Command::Stop => write!(f, "Stop"),
-            Command::Retry => write!(f, "Retry"),
-            Command::SwitchToRemote(address) => write!(f, "SwitchToRemote({address})"),
-            Command::SetSettings(settings) => write!(f, "SetSettings({settings:?})"),
-            Command::Shutdown => write!(f, "Shutdown"),
+            ClientMsg::Start => write!(f, "Start"),
+            ClientMsg::Stop => write!(f, "Stop"),
+            ClientMsg::Retry => write!(f, "Retry"),
+            ClientMsg::SwitchToRemote(address) => write!(f, "SwitchToRemote({address})"),
+            ClientMsg::SetSettings(settings) => write!(f, "SetSettings({settings:?})"),
+            ClientMsg::Shutdown => write!(f, "Shutdown"),
         }
     }
 }
 
 /// Handle the UI holds: what invokedables enqueue is what the loop sends.
 /// Dropping the handle does not shut the daemon down (the mirror's
-/// background-off `Drop` decides that, sending [`Command::Shutdown`]).
+/// background-off `Drop` decides that, sending [`ClientMsg::Shutdown`]).
 pub struct Connection {
-    commands: Sender<Command>,
+    commands: Sender<ClientMsg>,
 }
 
 impl Connection {
@@ -82,7 +100,7 @@ impl Connection {
     /// every session-lost event until the process ends; the loop thread
     /// owns them afterwards.
     pub fn start(events: Sender<ConnectionEvent>) -> Connection {
-        let (commands_tx, commands_rx) = unbounded::<Command>();
+        let (commands_tx, commands_rx) = unbounded::<ClientMsg>();
         // A thread-name/style note: this loop is the only thread that ever
         // touches the socket, which is what the §5 "one wire module" claim
         // is about.
@@ -108,9 +126,9 @@ impl Connection {
     /// commands anyway (§3) — the next mirrored snapshot or status frame is
     /// the confirmation. A dead loop is logged; the buffer is unbounded, so
     /// bursts of autosave checks can never block a Qt thread.
-    pub fn send(&self, command: Command) {
-        log::trace!("command {command:?}");
-        if let Err(e) = self.commands.send(command) {
+    pub fn send(&self, message: ClientMsg) {
+        log::trace!("request {message:?}");
+        if let Err(e) = self.commands.send(message) {
             log::warn!("command dropped, the connection loop is gone: {e:?}");
         }
     }
@@ -271,7 +289,7 @@ fn grow_backoff(wait: Duration) -> Duration {
 
 /// What a handshake produced for the caller.
 enum HandshakeOutcome {
-    /// Ready session: the daemon answered `Hello { protocol, busy: false }`
+    /// Ready session: the daemon answered `Connect { protocol, busy: false }`
     /// and will replay `Settings` + `Status` next.
     Session(Stream),
     /// A live, current daemon is busy with another client: never respawn.
@@ -285,15 +303,15 @@ fn handshake(socket: &str) -> Result<HandshakeOutcome, io::Error> {
         .to_ns_name::<GenericNamespaced>()
         .map_err(|e| io::Error::new(ErrorKind::InvalidInput, e.to_string()))?;
     let mut stream = Stream::connect(name)?;
-    write_frame(&mut stream, &ClientMsg::Hello { protocol: PROTOCOL })
-        .map_err(|e| io::Error::new(ErrorKind::BrokenPipe, format!("Hello write: {e}")))?;
+    write_frame(&mut stream, &ClientMsg::Connect { protocol: PROTOCOL })
+        .map_err(|e| io::Error::new(ErrorKind::BrokenPipe, format!("Connect write: {e}")))?;
     match read_frame::<DaemonMsg>(&mut stream) {
-        Ok(Some(DaemonMsg::Hello {
+        Ok(Some(DaemonMsg::Connect {
             protocol: PROTOCOL,
             busy: false,
         })) => Ok(HandshakeOutcome::Session(stream)),
-        Ok(Some(DaemonMsg::Hello { busy: true, .. })) => Ok(HandshakeOutcome::Busy),
-        Ok(Some(DaemonMsg::Hello { .. })) => Ok(HandshakeOutcome::Stale(stream)),
+        Ok(Some(DaemonMsg::Connect { busy: true, .. })) => Ok(HandshakeOutcome::Busy),
+        Ok(Some(DaemonMsg::Connect { .. })) => Ok(HandshakeOutcome::Stale(stream)),
         // A replay frame instead of the greeting: schema garbage or a
         // racing peer — no session.
         Ok(Some(other)) => Err(io::Error::new(
@@ -338,8 +356,8 @@ fn read_replay(mut stream: Stream, timeout: Duration) -> Option<Settings> {
     loop {
         match read_frame::<DaemonMsg>(&mut stream) {
             Ok(Some(DaemonMsg::Settings(settings))) => return Some(settings),
-            Ok(Some(DaemonMsg::Status(status))) => {
-                log::warn!("boot replay reached {status:?} without a settings snapshot");
+            Ok(Some(DaemonMsg::Status { code, .. })) => {
+                log::warn!("boot replay reached status code {code} without a settings snapshot");
                 return None;
             }
             Ok(Some(msg)) => log::debug!("skipping unexpected boot frame {msg:?}"),
@@ -361,20 +379,6 @@ enum SessionEnd {
     Abandoned,
 }
 
-/// Convert a UI command to its wire message; `Shutdown` is special (it
-/// ends the loop) and handled at its call sites.
-fn to_wire(command: Command) -> Option<ClientMsg> {
-    match command {
-        Command::Check(text) => Some(ClientMsg::Check { text }),
-        Command::Start => Some(ClientMsg::Start),
-        Command::Stop => Some(ClientMsg::Stop),
-        Command::Retry => Some(ClientMsg::Retry),
-        Command::SwitchToRemote(address) => Some(ClientMsg::SwitchToRemote(address)),
-        Command::SetSettings(settings) => Some(ClientMsg::SetSettings(settings)),
-        Command::Shutdown => None,
-    }
-}
-
 /// Pump one live session end-to-end: a reader thread feeds daemon frames
 /// into the event channel while the main path forwards UI commands onto
 /// the socket; the first failure tears the session down. This thread owns
@@ -382,7 +386,7 @@ fn to_wire(command: Command) -> Option<ClientMsg> {
 fn serve_session(
     mut stream: Stream,
     events: &Sender<ConnectionEvent>,
-    commands: &Receiver<Command>,
+    commands: &Receiver<ClientMsg>,
     pending: &mut Option<Settings>,
 ) -> SessionEnd {
     let Ok(mut reader) = stream.try_clone() else {
@@ -443,7 +447,7 @@ fn serve_session(
             },
             recv(done_rx) -> _ => return SessionEnd::Lost,
             recv(commands) -> command => match command {
-                Ok(Command::SetSettings(settings)) => {
+                Ok(ClientMsg::SetSettings(settings)) => {
                     // A newer snapshot always supersedes a buffered one.
                     *pending = None;
                     if let Err(e) =
@@ -454,7 +458,7 @@ fn serve_session(
                         return SessionEnd::Lost;
                     }
                 }
-                Ok(Command::Shutdown) => {
+                Ok(ClientMsg::Shutdown) => {
                     // Best-effort: the daemon quits as soon as it reads the
                     // frame and closes; the socket close mirrors it back.
                     if let Err(e) = write_frame(&mut stream, &ClientMsg::Shutdown) {
@@ -462,16 +466,12 @@ fn serve_session(
                     }
                     return SessionEnd::Shutdown;
                 }
-                Ok(command) => match to_wire(command).map(|msg| write_frame(&mut stream, &msg)) {
-                    Some(Ok(())) => {}
-                    Some(Err(e)) => {
-                        log::debug!("command write failed: {e}");
+                Ok(message) => {
+                    if let Err(e) = write_frame(&mut stream, &message) {
+                        log::debug!("request write failed: {e}");
                         return SessionEnd::Lost;
                     }
-                    // `to_wire` is total except for `Shutdown`; unreachable
-                    // but never a crash — log and keep pumping.
-                    None => log::warn!("unwired command in the session pump"),
-                },
+                }
                 Err(_) => {
                     // Last Connection handle dropped: process is winding down.
                     return SessionEnd::Abandoned;
@@ -482,10 +482,10 @@ fn serve_session(
 }
 
 /// Wait between reconnect attempts. `false` ends the loop: a queued
-/// [`Command::Shutdown`] with the daemon unreachable, or the UI dropping
+/// [`ClientMsg::Shutdown`] with the daemon unreachable, or the UI dropping
 /// the connection handle.
 fn wait_disconnected(
-    commands: &Receiver<Command>,
+    commands: &Receiver<ClientMsg>,
     wait: Duration,
     pending: &mut Option<Settings>,
 ) -> bool {
@@ -494,19 +494,19 @@ fn wait_disconnected(
         crossbeam::select! {
             recv(alarm) -> _ => return true,
             recv(commands) -> command => match command {
-                Ok(Command::Shutdown) => {
+                Ok(ClientMsg::Shutdown) => {
                     // Nothing to tell the daemon (no session); honor by not
                     // reconnecting.
                     log::info!("service shutdown requested while disconnected");
                     return false;
                 }
-                Ok(Command::SetSettings(settings)) => {
+                Ok(ClientMsg::SetSettings(settings)) => {
                     // Keep the newest snapshot; it is delivered on the next
                     // session start.
                     log::debug!("settings buffered while disconnected");
                     *pending = Some(settings);
                 }
-                Ok(command) => log::trace!("dropping {command:?} while disconnected"),
+                Ok(message) => log::trace!("dropping {message:?} while disconnected"),
                 Err(_) => return false,
             },
         }
@@ -514,7 +514,7 @@ fn wait_disconnected(
 }
 
 /// The whole connection lifetime: connect → handshake → session → wait.
-fn run_loop(events: Sender<ConnectionEvent>, commands: Receiver<Command>) {
+fn run_loop(events: Sender<ConnectionEvent>, commands: Receiver<ClientMsg>) {
     let socket = socket_name();
     let mut backoff = RETRY_CHUNK;
     let mut last_spawn: Option<Instant> = None;
@@ -573,6 +573,45 @@ mod tests {
         // Cap reached from below and respected at the cap.
         assert_eq!(grow_backoff(RETRY_MAX / 2), RETRY_MAX);
         assert_eq!(grow_backoff(RETRY_MAX), RETRY_MAX);
+    }
+
+    /// Every request survives the framing it rides on, and the postcard
+    /// tag (first payload byte after the length prefix) stays the
+    /// declaration index: the daemon parses these frames through its own
+    /// mirror enum, so this order is the shared schema — reordering or
+    /// inserting a variant must happen on both sides and bump `PROTOCOL`.
+    #[test]
+    fn requests_round_trip_and_pin_the_mirror_tag_order() {
+        let cases = [
+            (ClientMsg::Connect { protocol: PROTOCOL }, 0),
+            (
+                ClientMsg::Check {
+                    text: "She like football.".to_string(),
+                },
+                1,
+            ),
+            (ClientMsg::Start, 2),
+            (ClientMsg::Stop, 3),
+            (ClientMsg::Retry, 4),
+            (
+                ClientMsg::SwitchToRemote("http://192.168.1.10:8081".to_string()),
+                5,
+            ),
+            (ClientMsg::SetSettings(Settings::default()), 6),
+            (ClientMsg::Shutdown, 7),
+        ];
+        for (message, tag) in cases {
+            let mut wire = Vec::new();
+            write_frame(&mut wire, &message).expect("frame must encode");
+            assert_eq!(wire[4], tag, "tag of {message:?}");
+            assert_eq!(
+                read_frame::<ClientMsg>(&mut wire.as_slice())
+                    .expect("frame must decode")
+                    .expect("a written frame must come back before EOF"),
+                message,
+                "round trip of {message:?}"
+            );
+        }
     }
 
     fn forwarded(argv: &[&str]) -> Vec<String> {

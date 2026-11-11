@@ -37,8 +37,8 @@ RUST_BUILD_TYPE=release scripts/build-common.sh
 
 | Path | Role |
 |------|------|
-| `crates/rhesis-protocol` | Wire schema + framing for the daemon↔client socket (`PROTOCOL`, `DaemonMsg`/`ClientMsg`, postcard + `u32` length prefix) |
-| `crates/rhesis-settings` | The settings store the daemon owns (INI, migration, camelCase keys) |
+| `crates/rhesis-protocol` | Wire contract for the daemon↔client socket (`PROTOCOL`, `DaemonMsg`, `Recommendation`, postcard + `u32` length prefix); the client's request enum lives in `src/connection.rs`, the daemon parses it via a mirror in `crates/rhesis-service/src/session.rs` (same variants, same order) |
+| `crates/rhesis-settings` | The settings store the daemon owns (INI, migration, camelCase keys) plus the `Settings` type itself — the store schema and the wire snapshot in one definition |
 | `crates/rhesis-service` | Headless daemon binary: owns the LanguageTool server + all settings, one client session (`src/session.rs`, `daemon.rs`) — no Qt |
 | `crates/rhesis-platform` | OS surface (single-instance, autostart, process helpers, config paths, translations dir) — no Qt, no HTTP |
 | `crates/rhesis-languagetool` | LanguageTool worker library (used by the daemon): server lifecycle, HTTP client, fixture provider |

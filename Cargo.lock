@@ -1570,6 +1570,8 @@ dependencies = [
  "log",
  "rhesis-platform",
  "rhesis-protocol",
+ "rhesis-settings",
+ "serde",
  "winresource",
 ]
 
@@ -1582,6 +1584,7 @@ dependencies = [
  "reqwest",
  "rhesis-platform",
  "rhesis-protocol",
+ "rhesis-settings",
  "serde",
  "serde_json",
  "tokio",
@@ -1601,6 +1604,7 @@ name = "rhesis-protocol"
 version = "0.6.0"
 dependencies = [
  "postcard",
+ "rhesis-settings",
  "serde",
 ]
 
@@ -1617,6 +1621,7 @@ dependencies = [
  "rhesis-platform",
  "rhesis-protocol",
  "rhesis-settings",
+ "serde",
  "serde_json",
  "winresource",
 ]
@@ -1627,7 +1632,6 @@ version = "0.6.0"
 dependencies = [
  "log",
  "rhesis-platform",
- "rhesis-protocol",
  "serde",
  "serde_json",
 ]

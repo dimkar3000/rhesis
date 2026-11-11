@@ -1,4 +1,4 @@
-use rhesis_protocol::{Range, Recommendation};
+use rhesis_protocol::recommendation::{Range, Recommendation};
 
 use crate::{
     color_rules::ColorRules,

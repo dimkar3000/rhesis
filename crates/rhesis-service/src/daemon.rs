@@ -3,7 +3,7 @@
 //! Lifecycle (Refactor.md §2/§3): accept connections on a nonblocking
 //! listener so between attempts the daemon can watch the session-end signal
 //! and the idle-grace countdown; exactly one session may run at a time
-//! (second connects get a busy `Hello` and a drop); when the last client
+//! (second connects get a busy `Connect` and a drop); when the last client
 //! disconnects the daemon waits out the grace window (reconnects cancel it),
 //! unless `background` says to stay alive; on exit — grace, `Shutdown`, or
 //! fatal error — the LanguageTool worker is killed and joined
@@ -29,11 +29,13 @@ use interprocess::local_socket::{
     ToNsName as _,
 };
 
-use rhesis_languagetool::service::{LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage};
-use rhesis_protocol::{
-    constants::{PROTOCOL, SERVICE_SOCKET_NAME},
-    write_frame, DaemonMsg, Settings, WorkerStatus,
+use rhesis_languagetool::service::{
+    LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, WorkerStatus,
 };
+use rhesis_protocol::constants::{PROTOCOL, SERVICE_SOCKET_NAME};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::write_frame;
+use rhesis_settings::settings::Settings;
 use rhesis_settings::store::Store;
 
 use crate::constants::ACCEPT_SLICE;
@@ -277,7 +279,7 @@ fn second_client_refused(stream: Stream) {
     let mut stream = stream;
     let _ = write_frame(
         &mut stream,
-        &DaemonMsg::Hello {
+        &DaemonMsg::Connect {
             protocol: PROTOCOL,
             busy: true,
         },

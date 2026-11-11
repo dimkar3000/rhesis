@@ -9,11 +9,19 @@ use std::{
 use interprocess::local_socket::{traits::Stream as _, GenericNamespaced, Stream, ToNsName as _};
 
 use rhesis_protocol::constants::PROTOCOL;
-use rhesis_protocol::{
-    read_frame, tier_socket_name, write_frame, ClientMsg, DaemonMsg, Range, Recommendation,
-    Settings, WorkerStatus,
-};
-use rhesis_service::{config::worker_events, DaemonOptions};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::frame_error::FrameError;
+use rhesis_protocol::recommendation::{Range, Recommendation};
+use rhesis_protocol::tier_socket_name;
+use rhesis_protocol::{read_frame, write_frame};
+use rhesis_service::{config::worker_events, session::ClientMsg, DaemonOptions};
+use rhesis_settings::settings::Settings;
+
+/// The flattened wire codes of the statuses where requests may be sent
+/// (the worker's `Started` and `FailedToRespond`).
+fn started_like(code: i32) -> bool {
+    code == 2 || code == 5
+}
 
 /// The recorded fixture id the in-process daemons run against (see
 /// rhesis-languagetool fixtures); set straight on `DaemonOptions`, so no
@@ -177,10 +185,10 @@ struct Client {
 }
 
 /// Open a session the way the production client does: connect, then speak
-/// `Hello` first (the daemon only answers after the client's handshake).
+/// `Connect` first (the daemon only answers after the client's handshake).
 fn open_session(socket_name: &str) -> Client {
     let mut client = Client::connect(socket_name);
-    client.send(&ClientMsg::Hello { protocol: PROTOCOL });
+    client.send(&ClientMsg::Connect { protocol: PROTOCOL });
     client
 }
 
@@ -191,11 +199,11 @@ fn open_session_with_retry(socket_name: &str) -> Client {
     loop {
         let mut client = open_session(socket_name);
         match client.read(SLICE) {
-            Some(DaemonMsg::Hello {
+            Some(DaemonMsg::Connect {
                 protocol: PROTOCOL,
                 busy: false,
             }) => return client,
-            Some(DaemonMsg::Hello { busy: true, .. }) => client.expect_closed(),
+            Some(DaemonMsg::Connect { busy: true, .. }) => client.expect_closed(),
             // None: no handshake answer yet, keep polling.
             None => {}
             other => panic!("unexpected handshake answer {other:?}"),
@@ -242,7 +250,7 @@ impl Client {
         match read_frame::<DaemonMsg>(&mut self.stream) {
             Ok(Some(message)) => Some(message),
             Ok(None) => panic!("daemon closed the session unexpectedly"),
-            Err(rhesis_protocol::FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => None,
+            Err(FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => None,
             Err(e) => panic!("client frame read failed: {e}"),
         }
     }
@@ -259,8 +267,8 @@ impl Client {
                 .expect("recv timeout set");
             match read_frame::<DaemonMsg>(&mut self.stream) {
                 Ok(None) => return,
-                Err(rhesis_protocol::FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
-                Err(rhesis_protocol::FrameError::Io(e))
+                Err(FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(FrameError::Io(e))
                     if matches!(e.kind(), ErrorKind::ConnectionReset | ErrorKind::BrokenPipe) =>
                 {
                     return;
@@ -279,18 +287,18 @@ impl Client {
     /// a single recv slice can slip under load before the daemon thread
     /// gets scheduled, so `None` ("no frame yet") keeps polling until the
     /// shared deadline instead of failing the handshake.
-    fn expect_hello(&mut self, busy: bool) {
+    fn expect_connect(&mut self, busy: bool) {
         let deadline = Instant::now() + DEADLINE;
         loop {
             match self.read(SLICE) {
-                Some(DaemonMsg::Hello { protocol, busy: b }) => {
+                Some(DaemonMsg::Connect { protocol, busy: b }) => {
                     assert_eq!(protocol, PROTOCOL);
                     assert_eq!(b, busy, "Busy flag");
                     return;
                 }
                 // None: no handshake frame yet, keep polling.
                 None => {}
-                other => panic!("expected Hello (busy={busy}), got {other:?}"),
+                other => panic!("expected Connect (busy={busy}), got {other:?}"),
             }
             assert!(
                 Instant::now() < deadline,
@@ -320,19 +328,15 @@ impl Client {
         }
     }
 
-    /// Poll for a status satisfying `matches` (fake transitions may skip
-    /// intermediates or arrive while other frames flow).
-    fn wait_for_status(
-        &mut self,
-        describe: &str,
-        matches: impl Fn(&WorkerStatus) -> bool,
-    ) -> WorkerStatus {
+    /// Poll for a status code satisfying `matches` (fake transitions may
+    /// skip intermediates or arrive while other frames flow).
+    fn wait_for_status(&mut self, describe: &str, matches: impl Fn(i32) -> bool) -> (i32, String) {
         let deadline = Instant::now() + DEADLINE;
         let mut seen = Vec::new();
         loop {
             match self.read(SLICE) {
-                Some(DaemonMsg::Status(status)) if matches(&status) => return status,
-                Some(DaemonMsg::Status(status)) => seen.push(format!("status {status:?}")),
+                Some(DaemonMsg::Status { code, reason }) if matches(code) => return (code, reason),
+                Some(DaemonMsg::Status { code, .. }) => seen.push(format!("status code {code}")),
                 Some(frame) => seen.push(format!("{frame:?}")),
                 None => {}
             }
@@ -357,7 +361,7 @@ impl Client {
                 Some(DaemonMsg::Suggestion(recs)) => {
                     seen.push(format!("{} suggestions", recs.len()))
                 }
-                Some(DaemonMsg::Status(status)) => seen.push(format!("status {status:?}")),
+                Some(DaemonMsg::Status { code, .. }) => seen.push(format!("status code {code}")),
                 Some(frame) => panic!("unexpected frame {frame:?} while waiting for {describe}"),
                 None => {}
             }
@@ -377,13 +381,13 @@ fn full_session_replays_snapshot_and_answers_checks() {
     let pod = DaemonPod::start("full-session", Duration::from_secs(5), None);
     let mut client = open_session(&pod.socket_name);
 
-    client.expect_hello(false);
+    client.expect_connect(false);
     assert_eq!(
         client.expect_settings(),
         Settings::default(),
         "the snapshot replay shows the whole stored settings"
     );
-    client.wait_for_status("fake server started", WorkerStatus::is_started);
+    client.wait_for_status("fake server started", started_like);
 
     let expected = fixture_records();
     client.send(&ClientMsg::Check {
@@ -396,17 +400,17 @@ fn full_session_replays_snapshot_and_answers_checks() {
     assert_eq!(outcome, Ok(()));
 }
 
-/// The single-client gate: a second connect gets a busy Hello and a clean
+/// The single-client gate: a second connect gets a busy Connect and a clean
 /// close while the first session stays live.
 #[test]
 fn second_client_while_open_is_refused_busy_then_closed() {
     let pod = DaemonPod::start("busy-refusal", Duration::from_secs(5), None);
     let mut first = open_session(&pod.socket_name);
-    first.expect_hello(false);
+    first.expect_connect(false);
     let _ = first.expect_settings();
 
     let mut second = open_session(&pod.socket_name);
-    second.expect_hello(true);
+    second.expect_connect(true);
     second.expect_closed();
 
     // The first session remains the serving one: it can still shut the
@@ -424,9 +428,9 @@ fn second_client_while_open_is_refused_busy_then_closed() {
 fn set_settings_persists_and_switches_to_remote() {
     let pod = DaemonPod::start("set-settings", Duration::from_secs(5), None);
     let mut client = open_session(&pod.socket_name);
-    client.expect_hello(false);
+    client.expect_connect(false);
     let _ = client.expect_settings();
-    client.wait_for_status("fake server started", WorkerStatus::is_started);
+    client.wait_for_status("fake server started", started_like);
 
     let new_settings = Settings {
         embedded: false,
@@ -450,7 +454,7 @@ fn set_settings_persists_and_switches_to_remote() {
     );
     assert_eq!(disk["settings"]["language"], "el_GR");
 
-    client.wait_for_status("remote fake started", WorkerStatus::is_started);
+    client.wait_for_status("remote fake started", started_like);
     client.send(&ClientMsg::Check {
         text: CLEAN_TEXT.to_string(),
     });
@@ -469,7 +473,7 @@ fn set_settings_persists_and_switches_to_remote() {
 fn shutdown_message_ends_the_daemon() {
     let pod = DaemonPod::start("shutdown", Duration::from_secs(5), None);
     let mut client = open_session(&pod.socket_name);
-    client.expect_hello(false);
+    client.expect_connect(false);
     let _ = client.expect_settings();
 
     client.send(&ClientMsg::Shutdown);
@@ -483,9 +487,9 @@ fn shutdown_message_ends_the_daemon() {
 fn idle_grace_exits_when_nobody_returns() {
     let pod = DaemonPod::start("idle-grace", Duration::from_millis(300), None);
     let mut client = open_session(&pod.socket_name);
-    client.expect_hello(false);
+    client.expect_connect(false);
     let _ = client.expect_settings();
-    client.wait_for_status("fake server started", WorkerStatus::is_started);
+    client.wait_for_status("fake server started", started_like);
     drop(client);
 
     let outcome = pod.wait_result(DEADLINE);
@@ -503,7 +507,7 @@ fn background_stays_alive_until_setting_turns_it_off() {
     };
     let pod = DaemonPod::start("background", Duration::from_millis(200), Some(seed.clone()));
     let mut first = open_session(&pod.socket_name);
-    first.expect_hello(false);
+    first.expect_connect(false);
     assert_eq!(first.expect_settings(), seed, "background seeded in");
     drop(first);
 
@@ -539,9 +543,9 @@ fn background_stays_alive_until_setting_turns_it_off() {
 fn reconnect_within_the_grace_serves_the_new_session() {
     let pod = DaemonPod::start("reconnect", Duration::from_millis(600), None);
     let mut first = open_session(&pod.socket_name);
-    first.expect_hello(false);
+    first.expect_connect(false);
     let _ = first.expect_settings();
-    first.wait_for_status("fake server started", WorkerStatus::is_started);
+    first.wait_for_status("fake server started", started_like);
     drop(first);
 
     let mut second = open_session_with_retry(&pod.socket_name);
@@ -561,7 +565,7 @@ fn reconnect_within_the_grace_serves_the_new_session() {
     assert_eq!(outcome, Ok(()));
 }
 
-/// The handshake is strict: anything but `Hello` as the first frame is a
+/// The handshake is strict: anything but `Connect` as the first frame is a
 /// close without a session, and the slot frees for a real handshake right
 /// after.
 #[test]
@@ -598,4 +602,35 @@ fn reconnect_equal_settings_sends_no_extra_worker_frames() {
         worker_events(Some(&Settings::default()), &Settings::default()).is_empty(),
         "the pure half of the contract is still true"
     );
+}
+
+/// The parse mirror must keep the client's variant order: postcard tags by
+/// index, so the first payload byte after the length prefix is the
+/// declaration index. The Qt tier pins the same list on the client's enum;
+/// a mismatch on either side is a `PROTOCOL` bump plus a mirrored change.
+#[test]
+fn mirrored_requests_keep_the_client_tag_order() {
+    let cases = [
+        (ClientMsg::Connect { protocol: PROTOCOL }, 0),
+        (
+            ClientMsg::Check {
+                text: "She like football.".to_string(),
+            },
+            1,
+        ),
+        (ClientMsg::Start, 2),
+        (ClientMsg::Stop, 3),
+        (ClientMsg::Retry, 4),
+        (
+            ClientMsg::SwitchToRemote("http://192.168.1.10:8081".to_string()),
+            5,
+        ),
+        (ClientMsg::SetSettings(Settings::default()), 6),
+        (ClientMsg::Shutdown, 7),
+    ];
+    for (message, tag) in cases {
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &message).expect("frame must encode");
+        assert_eq!(wire[4], tag, "tag of {message:?}");
+    }
 }

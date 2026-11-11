@@ -10,4 +10,5 @@
 
 pub mod constants;
 pub mod ini;
+pub mod settings;
 pub mod store;

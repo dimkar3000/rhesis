@@ -43,6 +43,14 @@ pub(crate) const FAKE_FIXTURE_FLAG: &str = "--fake-lt";
 /// so hitting this means a wedged peer — boot on defaults instead.
 pub(crate) const BOOT_REPLAY_CAP: Duration = Duration::from_secs(1);
 
+// ---- interop: client-local status codes ----------------------------------
+
+/// Status code the client reports locally when no daemon session exists
+/// (QML's `server_status`). Codes 0-5 arrive from the daemon on the wire
+/// (`DaemonMsg::Status`); 6 never does — it exists only between the
+/// connection loop and the UI.
+pub(crate) const CLIENT_STATUS_DISCONNECTED: i32 = 6;
+
 // ---- main.rs: boot resources (used by the binary target, hence `pub`) ----
 
 /// QML root loaded at boot: Windows ships its own Kirigami-free QML

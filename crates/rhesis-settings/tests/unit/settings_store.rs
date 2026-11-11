@@ -7,8 +7,8 @@
 
 use std::path::PathBuf;
 
-use rhesis_protocol::constants::DEFAULT_PORT;
-use rhesis_protocol::Settings;
+use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_settings::settings::Settings;
 use rhesis_settings::store::Store;
 
 /// Real-QSettings-written legacy INI fixture (see tests/fixtures/ini/).

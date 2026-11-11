@@ -6,6 +6,7 @@ pub mod constants;
 pub mod dto;
 pub mod service;
 pub mod worker;
+pub mod worker_status;
 
 mod color_rules;
 mod completion_provider;

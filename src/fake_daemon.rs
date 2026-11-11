@@ -1,7 +1,7 @@
 //! Test-only daemon fixture: the real daemon's session semantics with the
 //! worker replaced by a hard-coded protocol stub.
 //!
-//! Scope (Refactor.md §9): speaks the same wire — strict `Hello`
+//! Scope (Refactor.md §9): speaks the same wire — strict `Connect`
 //! handshake, one busy-refused client slot, hand-shake replay
 //! (`Settings` snapshot then the last status), the mirror-echo cycle for
 //! `SetSettings`, and a recorded fixture for checks (the same values the
@@ -32,10 +32,12 @@ use interprocess::local_socket::{
 use interprocess::TryClone as _;
 
 use rhesis_protocol::constants::PROTOCOL;
-use rhesis_protocol::{
-    read_frame, write_frame, ClientMsg, DaemonMsg, Recommendation, Settings, WorkerStatus,
-};
+use rhesis_protocol::daemon_msg::DaemonMsg;
+use rhesis_protocol::recommendation::{Range, Recommendation};
+use rhesis_protocol::{read_frame, write_frame};
+use rhesis_settings::settings::Settings;
 
+use crate::connection::ClientMsg;
 use crate::constants::*;
 
 /// Start the fixture on a tier-unique socket name and publish it through
@@ -59,16 +61,23 @@ fn fixture_settings() -> Settings {
     Settings::default()
 }
 
+/// The flattened wire codes this fixture reports (see `DaemonMsg::Status`):
+/// the embedded server serves (`Start`/`Retry`), stopped (`Stop`), or the
+/// settings point at a remote server.
+const STOPPED_CODE: i32 = 0;
+const STARTED_CODE: i32 = 2;
+const CONNECTING_CODE: i32 = 4;
+
 /// The fixture boots as if its embedded server were already serving (the
 /// real daemon dispatches its store at boot and lands in `Started` for the
 /// default snapshot); suites assert the connected steady state.
-fn fixture_boot_status() -> WorkerStatus {
-    WorkerStatus::Started
+fn fixture_boot_status() -> (i32, String) {
+    (STARTED_CODE, String::new())
 }
 
 fn fixture_recommendations() -> Vec<Recommendation> {
     let grammar = |value: &str| Recommendation {
-        range: rhesis_protocol::Range {
+        range: Range {
             start: 4,
             length: 4,
         },
@@ -83,7 +92,7 @@ fn fixture_recommendations() -> Vec<Recommendation> {
         language: "EN-US".to_string(),
     };
     let spelling = Recommendation {
-        range: rhesis_protocol::Range {
+        range: Range {
             start: 38,
             length: 6,
         },
@@ -105,7 +114,7 @@ fn fixture_recommendations() -> Vec<Recommendation> {
 /// snapshot and the status the next replay uses.
 struct FakeState {
     settings: Mutex<Settings>,
-    status: Mutex<WorkerStatus>,
+    status: Mutex<(i32, String)>,
 }
 
 /// The one-client slot: `true` while a session thread owns the socket.
@@ -145,7 +154,7 @@ fn run(socket_name: &str) {
                     let mut refused = stream;
                     let _ = write_frame(
                         &mut refused,
-                        &DaemonMsg::Hello {
+                        &DaemonMsg::Connect {
                             protocol: PROTOCOL,
                             busy: true,
                         },
@@ -192,9 +201,9 @@ fn run_session(mut stream: Stream, state: Arc<FakeState>, slot: Slot) {
         }
     };
 
-    // --- strict handshake: the first frame must be a `Hello` ---------------
+    // --- strict handshake: the first frame must be a `Connect` -------------
     let handshake = match read_frame::<ClientMsg>(&mut read_side) {
-        Ok(Some(ClientMsg::Hello { protocol })) => {
+        Ok(Some(ClientMsg::Connect { protocol })) => {
             // A stale version is answered with OUR version so the client's
             // retire-and-respawn path has something to compare against,
             // then the session dies — the real daemon does the same.
@@ -205,7 +214,7 @@ fn run_session(mut stream: Stream, state: Arc<FakeState>, slot: Slot) {
             }
             let _ = write_frame(
                 &mut stream,
-                &DaemonMsg::Hello {
+                &DaemonMsg::Connect {
                     protocol: PROTOCOL,
                     busy: false,
                 },
@@ -213,7 +222,7 @@ fn run_session(mut stream: Stream, state: Arc<FakeState>, slot: Slot) {
             protocol == PROTOCOL
         }
         Ok(Some(other)) => {
-            eprintln!("fake daemon: first frame {other:?}, not a Hello; closing");
+            eprintln!("fake daemon: first frame {other:?}, not a Connect; closing");
             false
         }
         Ok(None) => false,
@@ -242,8 +251,8 @@ fn serve(read_side: &mut Stream, write_side: &mut Stream, state: &Arc<FakeState>
     if write_frame(write_side, &DaemonMsg::Settings(stored)).is_err() {
         return;
     }
-    let status = state.status.lock().unwrap().clone();
-    if write_frame(write_side, &DaemonMsg::Status(status)).is_err() {
+    let (code, reason) = state.status.lock().unwrap().clone();
+    if write_frame(write_side, &DaemonMsg::Status { code, reason }).is_err() {
         return;
     }
 
@@ -269,21 +278,45 @@ fn serve(read_side: &mut Stream, write_side: &mut Stream, state: &Arc<FakeState>
                 }
             }
             ClientMsg::Start => {
-                *state.status.lock().unwrap() = WorkerStatus::Started;
-                if write_frame(write_side, &DaemonMsg::Status(WorkerStatus::Started)).is_err() {
+                *state.status.lock().unwrap() = (STARTED_CODE, String::new());
+                if write_frame(
+                    write_side,
+                    &DaemonMsg::Status {
+                        code: STARTED_CODE,
+                        reason: String::new(),
+                    },
+                )
+                .is_err()
+                {
                     break;
                 }
             }
             ClientMsg::Stop => {
-                *state.status.lock().unwrap() = WorkerStatus::Stopped;
-                if write_frame(write_side, &DaemonMsg::Status(WorkerStatus::Stopped)).is_err() {
+                *state.status.lock().unwrap() = (STOPPED_CODE, String::new());
+                if write_frame(
+                    write_side,
+                    &DaemonMsg::Status {
+                        code: STOPPED_CODE,
+                        reason: String::new(),
+                    },
+                )
+                .is_err()
+                {
                     break;
                 }
             }
             ClientMsg::Retry => {
                 // The budget-less fixture simply reports running again.
-                *state.status.lock().unwrap() = WorkerStatus::Started;
-                if write_frame(write_side, &DaemonMsg::Status(WorkerStatus::Started)).is_err() {
+                *state.status.lock().unwrap() = (STARTED_CODE, String::new());
+                if write_frame(
+                    write_side,
+                    &DaemonMsg::Status {
+                        code: STARTED_CODE,
+                        reason: String::new(),
+                    },
+                )
+                .is_err()
+                {
                     break;
                 }
             }
@@ -303,23 +336,31 @@ fn serve(read_side: &mut Stream, write_side: &mut Stream, state: &Arc<FakeState>
                 if !mirror_and_reply(write_side, state, new_settings.clone()) {
                     break;
                 }
-                let status = if embedded {
-                    WorkerStatus::Started
+                let code = if embedded {
+                    STARTED_CODE
                 } else {
-                    WorkerStatus::Connecting
+                    CONNECTING_CODE
                 };
-                *state.status.lock().unwrap() = status.clone();
+                *state.status.lock().unwrap() = (code, String::new());
                 // The daemon's reconcile would report the transition only
                 // when something actually changed; the fixture needs no
                 // such bookkeeping (status replays are the next session's
                 // problem, everything here answers synchronously).
-                if write_frame(write_side, &DaemonMsg::Status(status)).is_err() {
+                if write_frame(
+                    write_side,
+                    &DaemonMsg::Status {
+                        code,
+                        reason: String::new(),
+                    },
+                )
+                .is_err()
+                {
                     break;
                 }
             }
             ClientMsg::Shutdown => break,
-            ClientMsg::Hello { .. } => {
-                eprintln!("fake daemon: second Hello on an established session; closing");
+            ClientMsg::Connect { .. } => {
+                eprintln!("fake daemon: second Connect on an established session; closing");
                 break;
             }
         }

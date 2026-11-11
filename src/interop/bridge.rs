@@ -89,9 +89,9 @@ pub mod ffi {
         #[qobject]
         #[qml_element]
         // The client mirror of the daemon-owned state (Refactor.md §5):
-        // status codes 0-5 are daemon-reported (WorkerStatus::code),
+        // status codes 0-5 arrive as the wire's `DaemonMsg::Status` code,
         // 6 = client-local Disconnected. The settings fields mirror the
-        // wire snapshot (rhesis_protocol::Settings) field-for-field;
+        // wire snapshot (rhesis_settings::Settings) field-for-field;
         // `default_port` is the factory hint. Written via the generated
         // setters from the fan-out (auto change signals), read everywhere.
         #[qproperty(i32, server_status)]
@@ -222,11 +222,11 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 use std::pin::Pin;
 
-use crate::connection::Command;
+use crate::connection::ClientMsg;
 use crate::interop::async_messaging_helper::{color_settings_to_variant, variant_to_settings};
 use crate::interop::bridge::ffi::{newUnderlinedFormat, QList_i32, QMap_QString_QVariant};
-use rhesis_protocol::constants::DEFAULT_PORT;
-use rhesis_protocol::Settings;
+use rhesis_settings::constants::DEFAULT_PORT;
+use rhesis_settings::settings::Settings;
 
 pub(super) type AsyncMessagingHelperRust =
     crate::interop::async_messaging_helper::AsyncMessagingHelperRust;
@@ -280,7 +280,7 @@ impl ffi::AsyncMessagingHelper {
         log::info!("applying settings snapshot: {settings:?}");
         self.as_mut().apply_settings(&settings);
         if let Some(connection) = &self.rust().connection {
-            connection.send(Command::SetSettings(settings));
+            connection.send(ClientMsg::SetSettings(settings));
         } else {
             log::warn!("settings snapshot dropped, no connection handle");
         }
@@ -288,23 +288,25 @@ impl ffi::AsyncMessagingHelper {
 
     fn start_server(self: Pin<&mut Self>) {
         log::info!("start_server requested");
-        self.send_command(Command::Start);
+        self.send_command(ClientMsg::Start);
     }
 
     fn stop_server(self: Pin<&mut Self>) {
         log::info!("stop_server requested");
-        self.send_command(Command::Stop);
+        self.send_command(ClientMsg::Stop);
     }
 
     fn retry_server(self: Pin<&mut Self>) {
         log::info!("retry_server requested");
-        self.send_command(Command::Retry);
+        self.send_command(ClientMsg::Retry);
     }
 
     /// A text edit landed: the debounce lives on the daemon side now, so
     /// every keystroke just goes onto the channel.
     fn text_area_changed(self: Pin<&mut Self>, text: QString) {
-        self.send_command(Command::Check(text.to_string()));
+        self.send_command(ClientMsg::Check {
+            text: text.to_string(),
+        });
     }
 
     /// Quit the daemon (tray menu / final UI quit): best-effort, fire and
@@ -312,7 +314,7 @@ impl ffi::AsyncMessagingHelper {
     /// command, connected or not.
     fn quit_service(self: Pin<&mut Self>) {
         log::info!("quit_service requested");
-        self.send_command(Command::Shutdown);
+        self.send_command(ClientMsg::Shutdown);
     }
 
     /// Whether an autostart-at-login entry currently exists (local OS
@@ -334,7 +336,7 @@ impl ffi::AsyncMessagingHelper {
     }
 
     /// One enqueue path: a dead loop is already logged by the Connection.
-    fn send_command(self: Pin<&mut Self>, command: Command) {
+    fn send_command(self: Pin<&mut Self>, command: ClientMsg) {
         if let Some(connection) = &self.rust().connection {
             connection.send(command);
         } else {
