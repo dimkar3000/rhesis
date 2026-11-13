@@ -14,6 +14,8 @@ use std::{
 };
 
 use crossbeam::channel::RecvTimeoutError;
+use rhesis_constants::DEFAULT_PORT;
+use rhesis_languagetool::client::LanguageToolClient;
 use rhesis_languagetool::constants::MAX_START_FAILURES;
 use rhesis_languagetool::service::{
     LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, ServiceSuggestion, WorkerHandles,
@@ -37,17 +39,24 @@ fn wait_for(predicate: impl Fn() -> bool, timeout: Duration) -> bool {
     predicate()
 }
 
+/// The real LanguageTool HTTP client. The address is a placeholder until a
+/// lifecycle event re-points it (each start/switch calls `update_address`
+/// first), and every test drives an event before expecting requests.
+fn live_provider() -> LanguageToolClient {
+    LanguageToolClient::new(format!("http://localhost:{DEFAULT_PORT}"))
+}
+
 fn start_worker() -> WorkerHandles {
     LanguageToolWorker::default()
         .with_startup_timeout(Duration::from_secs(2))
-        .start()
+        .start(live_provider())
         .expect("worker thread must spawn in tests")
 }
 
 fn start_worker_with_timeout(timeout: Duration) -> WorkerHandles {
     LanguageToolWorker::default()
         .with_startup_timeout(timeout)
-        .start()
+        .start(live_provider())
         .expect("worker thread must spawn in tests")
 }
 

@@ -1,53 +1,48 @@
+use std::future::Future;
+
 use rhesis_protocol::recommendation::Recommendation;
 
-use crate::{client::LanguageToolClient, fake_provider::FakeProvider};
+use crate::client::LanguageToolClient;
 
-pub(crate) enum CompletionProvider {
-    Live(LanguageToolClient),
-    Fake(FakeProvider),
+pub trait CompletionProvider: Send {
+    fn check_async(
+        &self,
+        text: &str,
+    ) -> impl Future<Output = Result<Vec<Recommendation>, String>> + Send;
+
+    fn health_check_async(&self) -> impl Future<Output = bool> + Send;
+
+    fn update_address(&mut self, base_address: &str);
+
+    fn set_colors(&mut self, rules: Vec<(String, String)>);
+
+    fn address(&self) -> &str;
+
+    fn manages_local_server(&self) -> bool;
 }
 
-impl CompletionProvider {
-    pub(crate) async fn check(&self, text: &str) -> Result<Vec<Recommendation>, String> {
-        match self {
-            CompletionProvider::Live(client) => client.get_recommendation(text).await,
-            CompletionProvider::Fake(fake) => fake.check(text),
-        }
+impl CompletionProvider for LanguageToolClient {
+    async fn check_async(&self, text: &str) -> Result<Vec<Recommendation>, String> {
+        self.get_recommendation(text).await
     }
 
-    pub(crate) async fn health_check(&self) -> bool {
-        match self {
-            CompletionProvider::Live(client) => client.health_check().await,
-            CompletionProvider::Fake(_) => true,
-        }
+    async fn health_check_async(&self) -> bool {
+        LanguageToolClient::health_check(self).await
     }
 
-    pub(crate) fn new_live(base_address: &str) -> Self {
-        CompletionProvider::Live(LanguageToolClient::new(base_address))
+    fn update_address(&mut self, base_address: &str) {
+        LanguageToolClient::update_address(self, base_address)
     }
 
-    pub(crate) fn new_fake(fixture_id: &str) -> Result<Self, String> {
-        FakeProvider::from_fixture(fixture_id).map(CompletionProvider::Fake)
+    fn set_colors(&mut self, rules: Vec<(String, String)>) {
+        LanguageToolClient::set_colors(self, rules)
     }
 
-    pub(crate) fn update_address(&mut self, base_address: &str) {
-        match self {
-            CompletionProvider::Live(client) => client.update_address(base_address),
-            CompletionProvider::Fake(fake) => fake.update_address(base_address),
-        }
+    fn address(&self) -> &str {
+        LanguageToolClient::address(self)
     }
 
-    pub(crate) fn set_colors(&mut self, rules: Vec<(String, String)>) {
-        match self {
-            CompletionProvider::Live(client) => client.set_colors(rules),
-            CompletionProvider::Fake(fake) => fake.set_colors(rules),
-        }
-    }
-
-    pub(crate) fn address(&self) -> &str {
-        match self {
-            CompletionProvider::Live(client) => client.address(),
-            CompletionProvider::Fake(fake) => fake.address(),
-        }
+    fn manages_local_server(&self) -> bool {
+        true
     }
 }

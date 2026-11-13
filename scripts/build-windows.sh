@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Configuration ---
-RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release-fast}"
+RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release}"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$PROJECT_DIR/target}"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts/windows"
@@ -40,7 +40,7 @@ usage() {
     echo "a JDK 17+ with jlink (JAVA_HOME), and Inno Setup 6 (ISCC.exe) for the installer."
     echo ""
     echo "Environment:"
-    echo "  RUST_BUILD_TYPE  Cargo profile: release, release-fast (default) or debug"
+    echo "  RUST_BUILD_TYPE  Cargo profile: release (default) or debug"
     echo ""
     echo "Options:"
     echo "  --no-installer  Only build the zip (skips the Inno Setup step)"
@@ -140,11 +140,9 @@ build_rust_app() {
     cd "$PROJECT_DIR"
     # Only the shipped binaries: the client + its headless service
     # daemon (develop also builds rhesis-ui-runner for the tests).
-    # Scoped --bin flags: bare --bin names resolve against the
-    # default-run package and would reject the daemon's bin.
+    # Both bins live in the root package; one -p claim carries them.
     cargo build --profile "$CARGO_PROFILE" \
-        -p rhesis --bin rhesis \
-        -p rhesis-service --bin rhesis-service
+        -p rhesis --bin rhesis --bin rhesis-service
 }
 
 # --- Download and trim LanguageTool (same trimming as build-common.sh) ---
@@ -199,7 +197,7 @@ create_trimmed_jre() {
 
 # --- Wrap the 256px PNG as a .ico (Vista+ ICO files may embed PNG data) ---
 create_icon() {
-    python - "$PROJECT_DIR/io.github.dimkar3000.rhesis.png" "$STAGE_DIR/rhesis.ico" <<'EOF'
+    python - "$PROJECT_DIR/assets/io.github.dimkar3000.rhesis.png" "$STAGE_DIR/rhesis.ico" <<'EOF'
 import struct, sys
 
 png = open(sys.argv[1], "rb").read()
@@ -232,7 +230,7 @@ stage_payload() {
     # Qt deployment runs against the client only: the daemon carries no
     # Qt linkage (checked in CI), so there is nothing to collect for it.
     "$QT_BIN/windeployqt.exe" \
-        --qmldir "$(winpath "$PROJECT_DIR/src/interop/qml/windows")" \
+        --qmldir "$(winpath "$PROJECT_DIR/crates/rhesis-qt-client/src/interop/qml/windows")" \
         --no-translations \
         --no-system-d3d-compiler \
         --no-opengl-sw \

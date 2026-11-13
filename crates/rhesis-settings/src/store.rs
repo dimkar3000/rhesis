@@ -1,24 +1,9 @@
-//! The single source of settings truth: one JSON file, whole-file atomic
-//! writes, lenient reads, and quarantine for untrustworthy files. On disk:
-//!
-//! ```json
-//! { "schema_version": 1, "settings": { ... } }
-//! ```
-//!
-//! Error policy: every read failure degrades to defaults with a log line,
-//! never a panic — the daemon must boot to serve text checks even with a
-//! broken file. A missing store is materialized (defaults written once); a
-//! corrupt file is *renamed* (`.corrupt`), never deleted, so a human can
-//! still see what was wrong.
-
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::settings::Settings;
 
-/// Current on-disk schema version. Bumped when the store layout changes;
-/// the wire keeps its own protocol version (`PROTOCOL` in rhesis-constants).
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug)]

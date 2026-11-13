@@ -7,15 +7,8 @@ license.workspace = true
 
 [dependencies]
 crossbeam.workspace = true
-# The daemon binary's argument parsing (--fake-lt <fixture>).
-clap.workspace = true
 log.workspace = true
-# The session pump parses client frames through its own mirrored request
-# enum (serde derives live here now that the shared one is gone).
 serde.workspace = true
-env_logger = "0.11.11"
-# Local-socket transport (Refactor.md §5): abstract UDS on Linux, named pipe
-# on Windows, behind the schema's SERVICE_SOCKET_NAME.
 interprocess = "2"
 
 rhesis-constants = { path = "../rhesis-constants" }
@@ -24,14 +17,7 @@ rhesis-settings = { path = "../rhesis-settings" }
 rhesis-languagetool = { path = "../rhesis-languagetool" }
 rhesis-platform = { path = "../rhesis-platform" }
 
-[build-dependencies]
-# Version info and icon for the Windows service executable (same identity
-# block as the client; see the root build.rs).
-winresource = "0.1"
-
 [dev-dependencies]
-# The daemon-session tier reads the owned store file directly for its
-# persistence assertions.
 serde_json = "1.0"
 
 # Test targets are declared explicitly: the files live in tests/unit/ rather

@@ -20,16 +20,16 @@ find_package(Qt6 COMPONENTS QmlTools QUIET)
 find_package(Qt6 COMPONENTS LinguistTools QUIET)
 
 # --- Options ---
-set(CARGO_BUILD_PROFILE "release" CACHE STRING "Cargo build profile (release, release-fast, debug)")
+set(CARGO_BUILD_PROFILE "release" CACHE STRING "Cargo build profile (release, debug)")
 
 # --- Build the Rust binaries ---
 # Packaging ships both: the Qt client (`rhesis`) and the headless
-# LanguageTool-service daemon (`rhesis-service`). The QML-test runner
+# LanguageTool-service daemon (`rhesis-service`). Both bins live in the
+# root package, so one -p claim carries them; the QML-test runner
 # binary (`rhesis-ui-runner`) is built by `cargo test` when it is needed.
 add_custom_target(rhesis_build ALL
     COMMAND cargo build
-        -p rhesis --bin rhesis
-        -p rhesis-service --bin rhesis-service
+        -p rhesis --bin rhesis --bin rhesis-service
         --profile ${CARGO_BUILD_PROFILE}
         --target-dir ${CMAKE_CURRENT_BINARY_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -47,11 +47,11 @@ endif()
 
 # --- Translations ---
 set(RHESIS_TRANSLATION_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/Root.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/MainPage.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/SettingsPage.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/components/RuleListItem.qml
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/interop/qml/components/ServerStatusIndicator.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/rhesis-qt-client/src/interop/qml/Root.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/rhesis-qt-client/src/interop/qml/MainPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/rhesis-qt-client/src/interop/qml/SettingsPage.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/rhesis-qt-client/src/interop/qml/components/RuleListItem.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/rhesis-qt-client/src/interop/qml/components/ServerStatusIndicator.qml
 )
 
 file(GLOB RHESIS_TRANSLATION_FILES

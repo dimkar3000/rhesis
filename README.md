@@ -105,7 +105,7 @@ bundled on Windows).
 
 Needs Rust (MSVC toolchain) with the Visual Studio C++ Build Tools, Qt 6.8+
 (MSVC 2022 64-bit kit) and a JDK 17+. Windows uses its own Kirigami-free QML in
-`src/interop/qml/windows/`, so KDE Frameworks are not needed.
+`crates/rhesis-qt-client/src/interop/qml/windows/`, so KDE Frameworks are not needed.
 
 ```sh
 # QMAKE must point at the Qt kit, and its bin dir must be on PATH to run
@@ -186,8 +186,8 @@ version tags (`v*`) or manually:
 
 - Checks version consistency (`Cargo.toml`/`CHANGELOG.md` vs tag) for
   final releases only, via `scripts/check-versions.sh`.
-- The tag format selects the build profile: `v*-*` (pre-release) →
-  `release-fast`, stable tag → `release`.
+- All flavors build with the `release` profile; `v*-*` tags are pre-releases,
+  which skip the version-consistency check.
 - Builds all four distribution flavors — Flatpak, AppImage, desktop
   tarballs (global and `--local`), and the Windows installer + zip —
   plus `runner.sh`. Every flavor bundles both binaries (client +

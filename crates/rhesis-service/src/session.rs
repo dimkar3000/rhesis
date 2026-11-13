@@ -1,21 +1,8 @@
-//! The single-client session pump: strict handshake, settings replay,
-//! message translation and teardown bookkeeping.
-//!
-//! Exactly one client session may run at a time (Refactor.md §3); the
-//! daemon's accept loop enforces that at connect time and this module runs
-//! the conversation that follows. The socket is shared between this pump
-//! (client → daemon requests) and a relay (worker → client events), so
-//! every write goes through one mutex while reads get their own cloned
-//! stream — a blocked read must never pin the write side of an idle relay
-//! frame.
-//!
-//! Every exit path funnels to the same teardown: stop the relay, hand the
-//! worker's message receiver back into the daemon slot (joined, so the
-//! next session truly finds it there), free the single-client slot, and
-//! report how the session ended to the daemon loop.
-
 use std::{
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread::JoinHandle,
 };
 
@@ -34,9 +21,6 @@ use crate::{
     settings_diff_to_worker_events::settings_diff_to_worker_events,
 };
 
-/// The daemon's parse of the client's request frames: the same variants in
-/// the same order as the client's enum (postcard tags by index), so a
-/// shape change on either side is a `PROTOCOL` bump on both.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     Connect { protocol: u32 },
@@ -49,21 +33,17 @@ pub enum ClientMsg {
     Shutdown,
 }
 
-/// Drive one client session to completion. Ownership of the single-client
-/// slot was already taken by the caller; this releases it exactly once.
 pub fn run_session(
     stream: Stream,
     state: Arc<DaemonState>,
-    slot: Arc<Mutex<bool>>,
+    slot: Arc<AtomicBool>,
     end: Sender<SessionEnd>,
 ) {
-    // Reads live on their own clone so a blocking read never holds the
-    // writer mutex.
     let mut read_side = match stream.try_clone() {
         Ok(stream) => stream,
         Err(e) => {
             log::warn!("cannot clone the session stream: {e:?}");
-            *slot.lock().unwrap() = false;
+            slot.store(false, Ordering::SeqCst);
             let _ = end.send(SessionEnd::Done);
             return;
         }
@@ -114,10 +94,8 @@ pub fn run_session(
     } else {
         false
     };
-    // --- teardown (every path) -------------------------------------------
-    // The relay was joined and has put the message receiver back into the
-    // daemon's slot; the next session can start the moment the flag drops.
-    *slot.lock().unwrap() = false;
+
+    slot.store(false, Ordering::SeqCst);
     let _ = end.send(if shutdown {
         SessionEnd::Shutdown
     } else {
@@ -125,9 +103,6 @@ pub fn run_session(
     });
 }
 
-/// Post-handshake conversation; returns whether the client asked for a
-/// daemon shutdown. Errors inside (client gone, worker gone) just end the
-/// session — the daemon keeps accepting.
 fn serve(
     read_side: &mut Stream,
     write_side: &Arc<Mutex<Stream>>,

@@ -60,8 +60,6 @@ pub struct LanguageToolWorker {
     status: WorkerStatus,
     consecutive_failures: u32,
     pub startup_timeout: Duration,
-
-    fake_fixture: Option<String>,
 }
 
 impl Default for LanguageToolWorker {
@@ -78,8 +76,6 @@ impl Default for LanguageToolWorker {
             // Default State: stopped, nothing running, local mode.
             use_local_server: true,
             remote_address: String::new(),
-            // Default: real provider (the fake comes from the seam below).
-            fake_fixture: None,
             status: WorkerStatus::Stopped,
             consecutive_failures: 0,
             startup_timeout: Duration::from_secs(60),
@@ -93,13 +89,6 @@ impl LanguageToolWorker {
     /// Override the readiness timeout (tests use a few seconds).
     pub fn with_startup_timeout(mut self, timeout: Duration) -> Self {
         self.startup_timeout = timeout;
-        self
-    }
-
-    /// Point the worker at the recorded fixture provider instead of the
-    /// real LanguageTool server: The Data are driven by the file `{{fixture_id}}.json`
-    pub fn with_fake_fixture(mut self, fixture_id: Option<String>) -> Self {
-        self.fake_fixture = fixture_id;
         self
     }
 
@@ -118,7 +107,7 @@ impl LanguageToolWorker {
 }
 
 impl LanguageToolWorker {
-    pub fn start(self) -> Option<WorkerHandles> {
+    pub fn start<P: CompletionProvider + 'static>(self, provider: P) -> Option<WorkerHandles> {
         let event_sender = self.event_sender.clone();
         let message_receiver = self.message_receiver.clone();
 
@@ -127,7 +116,7 @@ impl LanguageToolWorker {
         let thread_running = running.clone();
         let thread = match std::thread::Builder::new()
             .name("languagetool-worker".to_string())
-            .spawn(move || self.run_loop(thread_running))
+            .spawn(move || self.run_loop(provider, thread_running))
         {
             Ok(thread) => thread,
             Err(e) => {
@@ -144,7 +133,7 @@ impl LanguageToolWorker {
         })
     }
 
-    fn run_loop(mut self, running: Arc<AtomicBool>) {
+    fn run_loop<P: CompletionProvider>(mut self, mut provider: P, running: Arc<AtomicBool>) {
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -156,27 +145,6 @@ impl LanguageToolWorker {
                 running.store(false, Ordering::SeqCst);
                 return;
             }
-        };
-
-        // The fake-vs-real decision the worker was built with (the
-        // daemon's `--fake-lt` argument): a fixture id swaps the live
-        // server for the recorded fixture provider; a broken fixture
-        // degrades to the live client so the daemon stays usable.
-        let mut provider = match self.fake_fixture.as_deref() {
-            Some(id) => match CompletionProvider::new_fake(id) {
-                Ok(provider) => {
-                    log::info!("using the recorded fake provider fixture {id:?}");
-                    provider
-                }
-                Err(e) => {
-                    log::error!(
-                        "fake provider fixture {id:?} failed to load: {e}; \
-                         falling back to the live client"
-                    );
-                    CompletionProvider::new_live(&self.active_address())
-                }
-            },
-            None => CompletionProvider::new_live(&self.active_address()),
         };
 
         let mut last_text = String::default();
@@ -213,11 +181,11 @@ impl LanguageToolWorker {
         log::info!("LanguageTool worker stopped");
     }
 
-    fn handle_suggestions(
+    fn handle_suggestions<P: CompletionProvider>(
         &mut self,
         text: String,
         last_text: &mut String,
-        provider: &mut CompletionProvider,
+        provider: &mut P,
         runtime: &tokio::runtime::Runtime,
     ) -> Outcome {
         if !self.status.is_started() {
@@ -269,7 +237,7 @@ impl LanguageToolWorker {
 
         *last_text = text.clone();
 
-        match runtime.block_on(provider.check(&text)) {
+        match runtime.block_on(provider.check_async(&text)) {
             Ok(suggestions) => {
                 self.note_request_success();
                 log::debug!(
@@ -360,10 +328,10 @@ impl LanguageToolWorker {
         }
     }
 
-    fn process_event(
+    fn process_event<P: CompletionProvider>(
         &mut self,
         event: LanguageToolWorkerEvent,
-        provider: &mut CompletionProvider,
+        provider: &mut P,
         runtime: &tokio::runtime::Runtime,
         last_text: &mut String,
     ) -> Outcome {
@@ -470,12 +438,12 @@ impl LanguageToolWorker {
         }
     }
 
-    fn verify_remote(
+    fn verify_remote<P: CompletionProvider>(
         &mut self,
-        provider: &mut CompletionProvider,
+        provider: &mut P,
         runtime: &tokio::runtime::Runtime,
     ) {
-        if matches!(provider, CompletionProvider::Fake(_)) {
+        if !provider.manages_local_server() {
             self.record_success();
             return;
         }
@@ -516,7 +484,7 @@ impl LanguageToolWorker {
                 }
                 Err(_) => {}
             }
-            if runtime.block_on(provider.health_check()) {
+            if runtime.block_on(provider.health_check_async()) {
                 self.record_success();
                 return;
             }
@@ -537,12 +505,14 @@ impl LanguageToolWorker {
         }
     }
 
-    fn start_local_server(
+    fn start_local_server<P: CompletionProvider>(
         &mut self,
-        provider: &mut CompletionProvider,
+        provider: &mut P,
         runtime: &tokio::runtime::Runtime,
     ) {
-        if matches!(provider, CompletionProvider::Fake(_)) {
+        // Providers that answer checks themselves own no server lifecycle:
+        // no JVM to spawn, success is instant.
+        if !provider.manages_local_server() {
             self.record_success();
             return;
         }
@@ -553,7 +523,7 @@ impl LanguageToolWorker {
 
             if !Self::port_is_free(self.local_port) {
                 provider.update_address(&self.active_address());
-                if runtime.block_on(provider.health_check()) {
+                if runtime.block_on(provider.health_check_async()) {
                     log::info!(
                         "adopting LanguageTool already running on port {}",
                         self.local_port
@@ -636,9 +606,9 @@ impl LanguageToolWorker {
         }
     }
 
-    fn wait_until_ready(
+    fn wait_until_ready<P: CompletionProvider>(
         &mut self,
-        provider: &mut CompletionProvider,
+        provider: &mut P,
         runtime: &tokio::runtime::Runtime,
     ) -> VerifyOutcome {
         let deadline = Instant::now() + self.startup_timeout;
@@ -664,7 +634,7 @@ impl LanguageToolWorker {
                 Err(_) => {}
             }
 
-            if runtime.block_on(provider.health_check()) {
+            if runtime.block_on(provider.health_check_async()) {
                 return VerifyOutcome::Ready;
             }
         }

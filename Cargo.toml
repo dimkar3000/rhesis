@@ -5,30 +5,20 @@ authors = ["dimkar <dimkar3000@gmail.com>"]
 edition = "2021"
 license = "MIT"
 
-# Must stay first: `grep -m1 '^version'` (scripts/check-versions.sh) and
-# CMake's `file(STRINGS ... "^version =")` (CMakeLists.txt) both read the
-# first `version` line, so the package section anchors the project version.
+# Every test target is declared explicitly below; auto-discovery would also
+# compile shared helpers (tests/common.rs) as empty test targets.
+autotests = false
+
+default-run = "rhesis"
 
 [dependencies]
-crossbeam = { workspace = true }
-cxx = "1.0.176"
-cxx-qt = "0.9.1"
-cxx-qt-lib = { version = "0.9.1", features = ["qt_full"] }
-cxx-qt-lib-extras = { version = "0.9.1" }
-
 env_logger = "0.11.11"
-lazy_static = "1.5.0"
 log = { workspace = true }
-serde = { workspace = true }
-# Local-socket transport for the daemon connection (Refactor.md §5): the
-# client keeps no tokio and no reqwest; every wire type lives in
-# rhesis-protocol.
-interprocess = "2"
 
-rhesis-platform = { path = "crates/rhesis-platform" }
+rhesis-qt-client = { path = "crates/rhesis-qt-client" }
 rhesis-constants = { path = "crates/rhesis-constants" }
-rhesis-protocol = { path = "crates/rhesis-protocol" }
-rhesis-settings = { path = "crates/rhesis-settings" }
+rhesis-languagetool = { path = "crates/rhesis-languagetool" }
+rhesis-service = { path = "crates/rhesis-service" }
 
 [workspace]
 members = [
@@ -38,6 +28,7 @@ members = [
     "crates/rhesis-protocol",
     "crates/rhesis-settings",
     "crates/rhesis-service",
+    "crates/rhesis-qt-client",
 ]
 resolver = "2"
 
@@ -48,12 +39,9 @@ license = "MIT"
 
 [workspace.dependencies]
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
-clap = { version = "4.6.1", features = ["derive"] }
 log = "0.4.33"
 reqwest = { version = "0.13.4", features = ["json", "form"] }
 serde = { version = "1.0.228", features = ["serde_derive"] }
-# The fake completion provider (the --fake-lt harness seam) parses recorded
-# fixtures, so this is a runtime dependency, not just a dev one.
 serde_json = "1.0"
 tokio = { version = "1.52.3", features = ["full", "sync"] }
 windows-sys = { version = "0.61", features = [
@@ -66,11 +54,15 @@ windows-sys = { version = "0.61", features = [
 
 [[bin]]
 name = "rhesis"
-path = "src/main.rs"
+path = "src/rhesis-qt-client.rs"
+
+[[bin]]
+name = "rhesis-service"
+path = "src/rhesis-server.rs"
 
 [[bin]]
 name = "rhesis-ui-runner"
-path = "src/bin/rhesis-ui-runner.rs"
+path = "src/rhesis-ui-runner.rs"
 
 [profile.release]
 opt-level = 3
@@ -78,41 +70,29 @@ lto = true
 codegen-units = 1
 strip = true
 
-[profile.release-fast]
-inherits = "release"
-lto = "thin"
-codegen-units = 16
-strip = "none"
-debug = true
-
 [build-dependencies]
-# The link_qt_object_files feature is required for statically linking Qt 6.
-cxx-qt-build = { version = "0.9.0", features = ["link_qt_object_files"] }
-glob = "0.3.3"
 # Version info and icon for the Windows executable; the Windows shell (Task
 # manager's Startup list, Explorer, the taskbar) reads these from the exe.
 winresource = "0.1"
 
-[dev-dependencies]
+# The boot E2E drives the real Qt boot and spawns the shipped client binary
+# (CARGO_BIN_EXE_rhesis), so it lives here rather than in the qt-client
+# crate. Both targets are declared explicitly (autotests is off), and
+# dev-only Qt deps stay out of the shipped binaries' linkage.
 
-# Test targets are declared explicitly: the files live in tests/unit/ and
-# tests/e2e/ rather than directly in tests/, so cargo cannot auto-discover
-# them. A new test file needs its [[test]] entry or it never runs.
-
-# --- E2E tiers (whole process, real Qt) -------------------------------------
-
-# Boots the real Root.qml through the production sequence (C++ probes come
-# from src/ui_tests/harness.cpp, compiled by build.rs).
 [[test]]
 name = "ui-boot"
 path = "tests/e2e/ui_boot.rs"
 
-# QML page suites (tests/ui/*.qml) via the Qt Quick Test runner binary.
+# QML page suites (crates/rhesis-qt-client/tests/ui) via the Qt Quick Test runner
+# binary, which lives in this package.
 [[test]]
 name = "qml-suites"
 path = "tests/e2e/qml_suites.rs"
 
-# Two real binary launches: the single-instance guard.
-[[test]]
-name = "single-instance-e2e"
-path = "tests/e2e/single_instance_e2e.rs"
+[dev-dependencies]
+cxx = "1.0.176"
+cxx-qt-lib = { version = "0.9.1", features = ["qt_full"] }
+cxx-qt-lib-extras = { version = "0.9.1" }
+
+rhesis-platform = { path = "crates/rhesis-platform" }

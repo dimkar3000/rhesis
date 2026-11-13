@@ -29,26 +29,25 @@ RUST_BUILD_TYPE=release scripts/build-common.sh
 - Uses `mold` linker on Linux (same config file)
 - Dev run: `RUST_LOG=trace cargo run` for connection diagnostics; the spawned daemon logs to nowhere (detached stdio) — `RUST_LOG=trace ./build/target/debug/rhesis-service` watches it instead
 - Packaging builds both binaries: CMake's `rhesis_build` runs the scoped
-  `cargo build -p rhesis --bin rhesis -p rhesis-service --bin rhesis-service`
-  (bare `--bin` names resolve against the default-run package only); the
+  `cargo build -p rhesis --bin rhesis --bin rhesis-service`; the
   QML-test runner binary (`rhesis-ui-runner`) is built by `cargo test` when needed
 
 ## Architecture
 
 | Path | Role |
 |------|------|
-| `crates/rhesis-protocol` | Wire contract for the daemon↔client socket (`DaemonMsg`, `Recommendation`, postcard + `u32` length prefix); the client's request enum lives in `src/connection.rs`, the daemon parses it via a mirror in `crates/rhesis-service/src/session.rs` (same variants, same order) |
+| `crates/rhesis-protocol` | Wire contract for the daemon↔client socket (`DaemonMsg`, `Recommendation`, postcard + `u32` length prefix); the client's request enum lives in `crates/rhesis-qt-client/src/connection.rs`, the daemon parses it via a mirror in `crates/rhesis-service/src/session.rs` (same variants, same order) |
 | `crates/rhesis-constants` | Contract constants shared across crates — wire version (`PROTOCOL`), service socket name, factory LanguageTool port. Crate-internal knobs never move here |
 | `crates/rhesis-settings` | The settings store the daemon owns (atomic writes, camelCase keys) plus the `Settings` type itself — the store schema and the wire snapshot in one definition |
-| `crates/rhesis-service` | Headless daemon binary: owns the LanguageTool server + all settings, one client session (`src/session.rs`, `daemon.rs`) — no Qt |
+| `crates/rhesis-service` | Headless daemon library: owns the LanguageTool server + all settings, one client session (`src/session.rs`, `daemon.rs`) |
 | `crates/rhesis-platform` | OS surface (single-instance, autostart, process helpers, config paths, translations dir) — no Qt, no HTTP |
-| `crates/rhesis-languagetool` | LanguageTool worker library (used by the daemon): server lifecycle, HTTP client, fixture provider |
-| `src/main.rs` | UI-only entrypoint: plain `fn main`, Qt session + `connection::boot_snapshot()`, engine load |
-| `src/connection.rs` | The client's single wire-aware module: probe, spawn, handshake, reconnect loop, commands |
-| `src/fake_daemon.rs` | Test-only in-process daemon fixture (Qt tiers point their clients at it) |
-| `src/interop/` | CXX-Qt FFI bridge (`bridge.rs`), QML UI (`qml/`), custom highlighter, settings MIRROR properties |
+| `crates/rhesis-languagetool` | LanguageTool worker library (used by the daemon): server lifecycle, HTTP client; the completion boundary is the `CompletionProvider` trait (injected at `run()`; tiers implement it with fixture providers) |
+| `crates/rhesis-qt-client` | The Qt client: CXX-Qt FFI bridge (`src/interop/bridge.rs`), QML UI (`src/interop/qml/`), custom highlighter, connection loop (`src/connection.rs`), client constants, boot sequence (`src/run.rs`), the in-process fixture daemon (`src/fake_daemon.rs`) and the Quick Test machinery (`src/ui_tests.rs` + C++ probes). Owns its `build.rs` (QmlModule, QuickTest probes); the qrc and icons live in `assets/` |
+| `src/rhesis-qt-client.rs` | Client entrypoint shim: the GUI-subsystem attribute + `rhesis_qt_client::run()` |
+| `src/rhesis-server.rs` | Headless daemon entrypoint: logging + the real `LanguageToolClient` provider into `deamon_run`; must not reference `rhesis_qt_client` (headless rule below) |
+| `src/rhesis-ui-runner.rs` | Quick Test runner shim over `rhesis_qt_client::ui_tests::run_suites` |
 
-- UI: Qt6/KDE Kirigami via CXX-Qt (Rust↔C++↔QML), QML files in `src/interop/qml/`
+- UI: Qt6/KDE Kirigami via CXX-Qt (Rust↔C++↔QML), QML files in `crates/rhesis-qt-client/src/interop/qml/`
 - The UI is a thin client: the daemon binary owns the LanguageTool server and the
   settings store; the Qt process reads settings and drives the server only
   over a local socket (`interprocess` 2: abstract UDS / named pipe,
@@ -72,68 +71,73 @@ its `[[test]]` entry or it silently never runs.
 
 ```sh
 # One tier, while iterating
-cargo test -p rhesis --lib                             # in-module tests (Qt tier)
+cargo test -p rhesis-qt-client --lib                   # in-module tests (Qt tier)
 cargo test -p rhesis-languagetool --lib                # worker/provider internals
 cargo test -p rhesis-platform --lib                    # autostart layout logic
 cargo test -p rhesis-service --lib                     # daemon store/session internals
 cargo test --workspace --test languagetool-service     # worker loop
 cargo test --workspace --test daemon-session           # daemon↔client wire, store
-cargo test --workspace --test qml-suites               # tests/ui/*.qml
+cargo test --workspace --test qml-suites               # QML page suites
 cargo test --workspace --test ui-boot                  # real Root.qml boot
-cargo test --workspace --test single-instance-e2e      # two real launches
 ```
 
 Layout:
 
 | Path | Contents |
 |------|----------|
-| `src/**` | `#[cfg(test)]` modules for private-logic tests (highlighter fan-out/spy sink, connection backoff, snapshot parse→QVariant) |
+| `crates/rhesis-qt-client/src/**` | `#[cfg(test)]` modules for private-logic tests (highlighter fan-out/spy sink, connection backoff, snapshot parse→QVariant) |
+| `tests/e2e/ui_boot.rs` | In-process boot tier, root-owned because it spawns the root `rhesis` bin (`CARGO_BIN_EXE_rhesis`); Qt crates sit in root `[dev-dependencies]` so they stay out of the shipped binaries' linkage |
+| `crates/rhesis-qt-client/tests/ui/` | Quick Test page suites (run through the runner-subprocess tier) |
+| `tests/e2e/common.rs` | Shared sandbox helpers, used by the boot tier (`mod common;`) |
+| `tests/e2e/qml_suites.rs` | The runner-subprocess tier, root-owned because the runner bin is a root package bin |
 | `crates/rhesis-service` | daemon-session tier under `tests/unit/` (wire semantics against a real store) |
-| `crates/rhesis-languagetool` | `src/completion_provider.rs` in-module tests + tiers `languagetool_{client,dto,service}` under `tests/unit/`, fixtures under `tests/fixtures/lt/` |
+| `crates/rhesis-languagetool` | `src/completion_provider.rs` in-module tests + tiers `languagetool_{client,dto,service}` under `tests/unit/` |
 | `crates/rhesis-platform` | `autostart.rs` in-module tests + `single-instance` tier under `tests/unit/` |
-| `tests/e2e/` | Whole-process tiers: `ui_boot.rs`, `single_instance_e2e.rs`, `qml_suites.rs` |
-| `tests/ui/` | Qt Quick Test suites (`tst_*.qml`) + `harness.js` |
-| `tests/common/` | Shared sandbox/seed helpers, symlinked into the E2E tier (`tests/e2e/common`) |
 
 Nothing is feature-gated: there is no `ui-harness` feature, and QuickTest is
-compiled unconditionally by `build.rs` (the shipped binary simply never
-references it — verified by the gate below).
+compiled unconditionally by the `rhesis-qt-client` build script (the shipped binary
+simply never references it — verified by the gate below).
 
 Gates after every change:
 
 - `cargo fmt`
 - `cargo clippy --workspace --all-targets` — 0 warnings
 - `cargo test --workspace` — clean, no skips
-- shipped binaries' linkage: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`, and `rhesis-service` greps nothing for `qt[0-9]|quicktest` (enforced in CI's test.yml; the client's QuickTest gate stays a local check)
+- shipped binaries' linkage: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`, and `ldd build/target/debug/rhesis-service` shows no Qt (enforced in CI's test.yml; the client's QuickTest gate stays a local check)
 
 ### Headless rule
 
-`rhesis-service` must never gain a Qt dependency (not even transitively in its
-linkage): it is the process that may run with no UI around, and every flavor
-ships it next to the client for that purpose. CI's "Daemon binary links no Qt"
-step fails the run otherwise; keep it that way when touching Cargo.toml or
-Docker/CI plumbing.
+The daemon bin (`src/rhesis-server.rs`) shares the root package with the
+Qt client deps, but stays Qt-free by never referencing `rhesis_qt_client`: any use —
+even a plain const — pulls the C++ bridge's `#[link]` registrations in, and
+libQt6* lands in the daemon's NEEDED list (invisible on the rustc command
+line; verified under bfd, which defaults to --no-as-needed). Its imports stay
+on the service stack (`rhesis-service`, `rhesis-languagetool`,
+`rhesis-constants`). CI's "Daemon binary links no Qt" ldd step fails the run
+otherwise; the daemon is the process that may run with no UI around, and
+every flavor ships it next to the client for that purpose.
 
 ### Hermeticity
 
 Every tier is offline and side-effect free by construction, so no test needs
 a LanguageTool installation or a running server:
 
-- Worker/provider requests are answered by the recorded fixture — never java,
-  never the network. The fake-vs-real decision travels only through
-  arguments: the daemon takes `--fake-lt <fixture>` (clap →
-  `DaemonOptions::fake_fixture`, built from `CompletionProvider::new_live` /
-  `::new_fake`), in-process tiers set the field directly, and the one real-binary
-  tier (single-instance) launches the client with `--fake-lt` and lets the
-  client re-emit the flag on the daemon command line it spawns — no
-  environment variable carries the choice anywhere.
-  The Qt tiers never own a worker: they point their clients at the in-process
-  fake daemon (`src/fake_daemon.rs`), whose socket name is pinned through
-  `RHESIS_SERVICE_SOCKET` ahead of every client (the env pin also disables
-  detached-binary spawning in `connection.rs`).
-- `tests/common/mod.rs` (in-process tiers) and `src/ui_tests.rs :: isolate_environment`
-  (QML runner) redirect every XDG home into `build/ui-tests/<tier>-env`, so
-  autostart files and every configuration path stay in the sandbox.
+- The completion provider is injected at `run()` via the `CompletionProvider`
+  trait (see `crates/rhesis-languagetool/src/completion_provider.rs`): the
+  live client answers `true` for `manages_local_server` and owns the JVM
+  lifecycle; tier fakes answer `false` and every start/verify completes
+  instantly. The fake-vs-real choice never crosses a process boundary — no
+  test spawns a daemon binary, no environment variable carries it, and there
+  are no feature gates or re-exports as substitutes. The daemon itself never
+  builds a provider; its caller does.
+- The Qt tiers never own a worker: they point their clients at the in-process
+  fake daemon (`crates/rhesis-qt-client/src/fake_daemon.rs`), whose socket name is
+  pinned through `RHESIS_SERVICE_SOCKET` ahead of every client (the env pin
+  also disables detached-binary spawning in `connection.rs`).
+- `tests/e2e/common.rs` (the boot tier's sandbox helpers)
+  and `crates/rhesis-qt-client/src/ui_tests.rs :: isolate_environment` (QML runner)
+  redirect every XDG home into `build/ui-tests/<tier>-env`, so autostart files
+  and every configuration path stay in the sandbox.
 
 ### Tier notes
 
@@ -161,8 +165,10 @@ a LanguageTool installation or a running server:
   behind. `capture` grabs once to force a frame, waits
   for the UI thread to polish, grabs again, and fails the test on a null or
   still-blank image: a blank `_PASS` hides the very state it documents.
-- **Single instance** (`tests/e2e/single_instance_e2e.rs`): two real binary
-  launches; needs the socket preconditions from `tests/common`.
+- **Single instance**: deleted its whole-process tier (`tests/e2e/single_instance_e2e.rs`).
+  The guard *logic* keeps its platform-crate unit tests; the boot-order wiring
+  (guard bound before UI, stand-down exits without a UI) is untested — the
+  component-test trade stated to the user.
 - Lessons: inverted settle contract (fixed), QQmlSettings 500ms write timer
   (poll-until-file-contains pattern), phantom generic turbofish,
   rerun-if-changed gap in build.rs, `grabImage` needs a `QQuickItem*`
@@ -228,10 +234,10 @@ other workflows:
   clippy runs in the shared build (test mode) because its check-mode
   artifacts are a different compiler pipeline from the test binaries and
   must be cached there, or every run rechecks the whole dependency graph.
-- The QML page suites (`tests/ui/*.qml`) are local-only: their purpose is
-  browser-free screenshots for manual inspection, so CI skips that one
-  target. The boot E2E also skips its evidence screenshot when `CI` is set,
-  so a CI run writes no images at all. Run the suites locally with
+- The QML page suites (`crates/rhesis-qt-client/tests/ui/*.qml`) are local-only: their
+  purpose is browser-free screenshots for manual inspection, so CI skips that
+  one target. The boot E2E also skips its evidence screenshot when `CI` is
+  set, so a CI run writes no images at all. Run the suites locally with
   `cargo test --test qml-suites`.
 - Custom Docker image (`ghcr.io/<owner>/rhesis-ci:kde-6.11`) — has Qt 6.11
   QuickTest, the `QtTest` QML module, `org.kde.desktop` style, offscreen
@@ -250,7 +256,8 @@ other workflows:
 
 - Triggers: tags matching `v*` or manual dispatch
 - Custom Docker image (`ghcr.io/<owner>/rhesis-ci:kde-6.11`)
-- Tag format determines profile: `v*-*` (pre-release) → `release-fast`, stable tag → `release`
+- All packaged builds use the `release` profile; the tag format only marks
+  pre-releases: `v*-*` skips the version check (see Releasing)
 - Builds Flatpak + AppImage + desktop tarballs via one `build-linux` step (wrapper script `scripts/build-linux.sh` around `build-flatpak.sh`, `build-appimage.sh` and `build-desktop.sh` — global and `--local`), and the Windows installer + zip via `scripts/build-windows.sh`; every flavor ships both binaries (`rhesis` client + `rhesis-service` daemon in one `bin/`; the daemon links no Qt), uploads to release on version tags
 - Release includes `runner.sh` alongside the desktop tarballs for download-and-install
 

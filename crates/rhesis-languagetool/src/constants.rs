@@ -23,7 +23,3 @@ pub(crate) const FASTTEXT_LAYOUTS: &[(&str, &str)] = &[
     ("../lid.176.ftz", "../bin/fasttext"),
     ("../lid.176.ftz", "../../bin/fasttext"),
 ];
-
-/// Directory of the recorded fixture files, relative to this crate's
-/// manifest root: `<id>.json` tables of `text → recorded answer` entries.
-pub(crate) const FIXTURE_DIR: &str = "tests/fixtures/lt";

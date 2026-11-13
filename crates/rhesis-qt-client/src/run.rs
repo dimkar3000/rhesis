@@ -1,6 +1,5 @@
-// Release builds on Windows are GUI-subsystem apps: no console window next to
-// the UI. Debug builds keep the console so `cargo run` still shows the logs.
-#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+//! The client boot sequence, driven by the `rhesis` binary
+//! (`src/rhesis-qt-client.rs`).
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QQuickStyle, QString, QUrl};
 
@@ -9,9 +8,9 @@ use lazy_static::lazy_static;
 
 use std::env;
 
-use rhesis::connection;
-use rhesis::constants::{DEFAULT_QUICK_STYLE, ROOT_QML_SOURCE};
-use rhesis::interop::bridge;
+use crate::connection;
+use crate::constants::{DEFAULT_QUICK_STYLE, ROOT_QML_SOURCE};
+use crate::interop::bridge;
 use rhesis_platform::autostart;
 use rhesis_platform::constants::{APP_ID, HIDDEN_FLAG};
 use rhesis_platform::install::InstallationSetup;
@@ -28,7 +27,11 @@ lazy_static! {
     static ref LOGO_PATH: QString = QString::from(":/icons/hicolor/256x256/apps/logo.png");
 }
 
-fn run_ui() {
+/// Boots the UI: identity, the single-instance guard, the daemon snapshot
+/// probe, background behavior, autostart self-heal, icon theme, translations,
+/// desktop file name, KDE style, engine load. Returns when the Qt event loop
+/// ends.
+pub fn run() {
     env_logger::init();
 
     let mut app = QApplication::new();
@@ -138,8 +141,4 @@ fn run_ui() {
         bridge::ffi::appSetWindowIcon(app.as_mut(), &LOGO_PATH);
         app.exec();
     }
-}
-
-fn main() {
-    run_ui();
 }

@@ -84,11 +84,14 @@ jobs:
         run: cargo fmt --workspace --check
 
       - name: Daemon binary links no Qt (headless check)
-        # The architecture's whole point: `rhesis-service` is a headless
-        # daemon, so its linkage must carry neither QuickTest (a compile
-        # leak through the shared workspace) nor any Qt library. The client
-        # binary's QuickTest link gate stays local (AGENTS.md); this check
-        # is what makes a regression of the split fail in CI.
+        # The daemon bin lives in the Qt workspace (`src/rhesis-server.rs`,
+        # root package) and stays Qt-free only while it never references the
+        # `rhesis-qt-client` crate: any use — even a plain const — pulls the bridge's
+        # #[link] registrations in, and libQt6* lands in NEEDED on the CI
+        # linker (bfd defaults to --no-as-needed). The pull-in is invisible
+        # on the rustc command line; this ldd gate is the only thing that
+        # catches it. The client binary's QuickTest link gate stays local
+        # (AGENTS.md).
         run: |
           binary=build/target/debug/rhesis-service
           if ! [ -x "$binary" ]; then

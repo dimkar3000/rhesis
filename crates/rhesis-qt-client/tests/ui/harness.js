@@ -99,8 +99,10 @@ function capture(testCase, passed, target, label) {
                        .concat(label ? [label] : [])
                        .concat([status]).join("_") + ".png";
     // Qt.resolvedUrl("./") in a .pragma library returns a Url whose toString()
-    // is "file:///home/.../tests/ui/". Strip the protocol and go up two
-    // levels (ui → tests → project root) to reach build/tests/.
+    // is "file:///home/.../crates/<crate>/tests/ui/". Strip the protocol and
+    // drop the last two components (tests/ui), then cut at the "crates"
+    // component: the workspace keeps every member under crates/<name>, so
+    // what remains is the project root that owns build/tests/.
     var urlStr = Qt.resolvedUrl("./").toString();
     // "file:///" → ""
     var base = urlStr.slice(7);
@@ -109,7 +111,8 @@ function capture(testCase, passed, target, label) {
     var parts = base.split("/");
     parts.pop(); // remove "ui"
     parts.pop(); // remove "tests"
-    var projectRoot = parts.join("/");
+    var crates = parts.indexOf("crates");
+    var projectRoot = crates >= 0 ? parts.slice(0, crates).join("/") : parts.join("/");
     var screenshotUrl = projectRoot + "/build/tests/" + filename;
 
     // grabImage takes a QQuickItem*. A window (ApplicationWindow, Window) is

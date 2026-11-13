@@ -9,6 +9,7 @@ use std::{
 use interprocess::local_socket::{traits::Stream as _, GenericNamespaced, Stream, ToNsName as _};
 
 use rhesis_constants::PROTOCOL;
+use rhesis_languagetool::service::CompletionProvider;
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::recommendation::{Range, Recommendation};
@@ -26,11 +27,7 @@ fn started_like(code: i32) -> bool {
     code == 2 || code == 5
 }
 
-/// The recorded fixture id the in-process daemons run against (see
-/// rhesis-languagetool fixtures); set straight on `DaemonOptions`, so no
-/// environment is touched.
-const FAKE_LT: &str = "checker";
-/// Text with a recorded two-match answer in the checker fixture.
+/// Text with a recorded two-match answer the tier's fixture provider serves.
 const FIXTURE_TEXT: &str = "She like football and play the guitar quicly.";
 
 /// The empty-answer record of the same fixture.
@@ -87,6 +84,43 @@ Or did you forget to add a verb?";
     ]
 }
 
+/// Tier-local completion provider backing the in-process daemons: it answers
+/// checks from [`fixture_records`] instead of a LanguageTool server, so no
+/// JVM or fixture file is involved. `check` serves the recorded batch for
+/// `FIXTURE_TEXT` and an empty batch for anything else; `health_check` is
+/// always ready. Colors and the address are accepted but ignored — answers
+/// come pre-mapped at load, exactly like today's checker.json behavior.
+///
+/// `manages_local_server` is `false`: the worker skips spawning a server
+/// entirely, so every start completes instantly without touching java.
+struct FixtureProvider;
+
+impl CompletionProvider for FixtureProvider {
+    async fn check_async(&self, text: &str) -> Result<Vec<Recommendation>, String> {
+        if text == FIXTURE_TEXT {
+            Ok(fixture_records())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    async fn health_check_async(&self) -> bool {
+        true
+    }
+
+    fn update_address(&mut self, _base_address: &str) {}
+
+    fn set_colors(&mut self, _rules: Vec<(String, String)>) {}
+
+    fn address(&self) -> &str {
+        ""
+    }
+
+    fn manages_local_server(&self) -> bool {
+        false
+    }
+}
+
 fn sandbox(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "rhesis-daemon-session-{}-{name}",
@@ -121,8 +155,6 @@ impl DaemonPod {
             socket_name: socket_name.clone(),
             store_path,
             idle_grace: grace,
-            // The fake provider comes through the options now; no environment.
-            fake_fixture: Some(FAKE_LT.to_string()),
         };
         let result = Arc::new(Mutex::new(None));
         let slot = result.clone();
@@ -130,7 +162,7 @@ impl DaemonPod {
         let handle = std::thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
-                let outcome = rhesis_service::daemon::run(&options);
+                let outcome = rhesis_service::daemon::deamon_run(&options, FixtureProvider);
                 *slot.lock().unwrap() = Some(outcome);
             })
             .expect("daemon thread spawned");
@@ -374,7 +406,7 @@ impl Client {
 
 /// One full conversation: version handshake, settings + status replay, the
 /// first-handshake replay of the worker's config, and a real check against
-/// the recorded fixture.
+/// the tier's fixture provider.
 #[test]
 fn full_session_replays_snapshot_and_answers_checks() {
     let pod = DaemonPod::start("full-session", Duration::from_secs(5), None);
@@ -421,8 +453,8 @@ fn second_client_while_open_is_refused_busy_then_closed() {
 
 /// Locked settings ownership: the daemon persists `SetSettings` into its
 /// JSON store (camelCase keys), mirrors the confirmed snapshot back, and
-/// moves the worker to the new server — which the recorded fake answers
-/// on, unchanged.
+/// moves the worker to the new server — which the tier's fixture provider
+/// answers on, unchanged.
 #[test]
 fn set_settings_persists_and_switches_to_remote() {
     let pod = DaemonPod::start("set-settings", Duration::from_secs(5), None);
@@ -536,8 +568,8 @@ fn background_stays_alive_until_setting_turns_it_off() {
 }
 
 /// A reconnection inside the grace window gets the free slot (cancelling
-/// the countdown) and becomes a living session — the embedded fake server
-/// never stopped behind it.
+/// the countdown) and becomes a living session — the tier's fixture
+/// provider keeps answering behind it.
 #[test]
 fn reconnect_within_the_grace_serves_the_new_session() {
     let pod = DaemonPod::start("reconnect", Duration::from_millis(600), None);

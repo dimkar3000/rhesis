@@ -1,6 +1,6 @@
 [package]
 name = "rhesis-languagetool"
-description = "LanguageTool worker: server lifecycle, HTTP suggestion fetches, fixture provider"
+description = "LanguageTool worker: server lifecycle, HTTP suggestion fetches"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,8 +10,8 @@ log.workspace = true
 crossbeam.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-# The fake completion provider (the --fake-lt harness seam) parses recorded
-# fixtures, so this is a runtime dependency, not just a dev one.
+# `serde_json` is a runtime dependency of the crate's own DTO round-trip
+# (client and dto test tiers parse recorded LanguageTool responses with it).
 serde_json.workspace = true
 # The worker drives its HTTP client on an internal runtime.
 tokio.workspace = true

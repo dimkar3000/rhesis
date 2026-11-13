@@ -1,7 +1,7 @@
 //! Full-boot E2E — the Rust-driven tier of the UI test stack.
 //!
 //! Boots the real `Root.qml` inside a running QApplication by mirroring the
-//! production boot sequence (`src/main.rs :: run_ui`) step by step: identity,
+//! production boot sequence (`src/run.rs :: run`) step by step: identity,
 //! the single-instance guard, the daemon snapshot probe, background
 //! behavior, autostart self-heal, icon theme, translations, desktop file
 //! name, KDE style, engine load.
@@ -48,13 +48,13 @@ use std::time::{Duration, Instant};
 use cxx::UniquePtr;
 use cxx_qt_lib::{QGuiApplication, QQuickStyle, QString};
 use cxx_qt_lib_extras::{QApplication, QEventLoop};
-use rhesis::interop::bridge;
 use rhesis_platform::autostart;
 use rhesis_platform::install::InstallationSetup;
 use rhesis_platform::resources::translations_dir;
 use rhesis_platform::single_instance;
+use rhesis_qt_client::interop::bridge;
 
-/// App id, doubling as the desktop file name (see main.rs).
+/// App id, doubling as the desktop file name (see run.rs).
 const NAMESPACE: &str = "io.github.dimkar3000.rhesis";
 
 /// Wire status codes (`DaemonMsg::Status`); the fake daemon boots as if its
@@ -140,27 +140,27 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     }
     // The env pin freezes spawning: the steady-state client (and the boot
     // probe) connects to THIS fixture and never execs a detached binary.
-    rhesis::fake_daemon::spawn();
+    rhesis_qt_client::fake_daemon::spawn();
     // The boot stays hermetic without extra seeding: the socket pin above
     // means nothing in this process spawns a daemon, and the fixture
     // daemon answers every check itself.
     env_logger::init();
 
     // ---------------------------------------------------------------------
-    // Production boot sequence (mirrors run_ui in src/main.rs).
+    // Production boot sequence (mirrors run in src/run.rs).
     // ---------------------------------------------------------------------
     let mut application = QApplication::new();
     if let Some(mut app) = application.as_mut() {
         use std::pin::Pin;
         // Qt resolves its per-configuration paths from these names — set
-        // before the engine loads, exactly as in main.rs (the same re-pins
+        // before the engine loads, exactly as in run() (the same re-pins
         // per call are the pattern for the by-value Pin receivers).
         Pin::as_mut(&mut app).set_organization_name(&QString::from("rhesis"));
         Pin::as_mut(&mut app).set_organization_domain(&QString::from("dimkar.org"));
         Pin::as_mut(&mut app).set_application_name(&QString::from("Rhesis"));
     }
 
-    // Single-instance guard first (as in run_ui): the boot tier must win the
+    // Single-instance guard first (as in run()): the boot tier must win the
     // abstract socket. A live Rhesis (host install, flatpak, or a stale test
     // process) would own it and this UI flow would then deliberately stand
     // down.
@@ -175,7 +175,7 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     // BEFORE Qt builds anything. The env pin keeps the probe aimed at the
     // in-process fixture; the single-client slot (§3) makes this strictly
     // sequential — the steady-state connection starts later, from QML.
-    let snapshot = rhesis::connection::boot_snapshot();
+    let snapshot = rhesis_qt_client::connection::boot_snapshot();
     let snapshot = snapshot.expect("the fake daemon must answer the boot probe");
     assert_eq!(snapshot.port, 2689, "fixture default port");
     assert!(snapshot.embedded, "fixture defaults to the embedded server");
@@ -189,7 +189,7 @@ fn full_boot_drives_the_real_ui_end_to_end() {
     );
 
     // The preference the snapshot carries shapes the process before any
-    // window can exist (§5: mirror of main.rs).
+    // window can exist (§5: mirror of run()).
     bridge::ffi::setBackgroundBehavior(snapshot.background);
 
     // Production parity: under $APPIMAGE the heal repoints the autostart
@@ -414,7 +414,7 @@ fn full_boot_drives_the_real_ui_end_to_end() {
 // Boot plumbing
 // ----------------------------------------------------------------------
 
-/// The root document URL, decomposed the same way main.rs builds it from the
+/// The root document URL, decomposed the same way run() builds it from the
 /// app id (dots become the path separators).
 fn root_qml_url() -> String {
     format!(

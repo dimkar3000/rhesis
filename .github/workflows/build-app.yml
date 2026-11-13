@@ -23,7 +23,7 @@ on:
         type: string
         default: test
       profile:
-        description: "Cargo profile; auto = release-fast for v*-* tags, release otherwise"
+        description: "Cargo profile; auto = release"
         required: false
         type: string
         default: auto
@@ -32,7 +32,7 @@ on:
         description: "Key of the cache this build populated"
         value: ${{ jobs.build.outputs.cache-key }}
       profile:
-        description: "Effective Cargo profile (debug, release, release-fast)"
+        description: "Effective Cargo profile (debug, release)"
         value: ${{ jobs.build.outputs.profile }}
 
 jobs:
@@ -68,10 +68,7 @@ jobs:
           if [ "${{ inputs.mode }}" = "test" ]; then
             profile=debug
           elif [ "$profile" = "auto" ]; then
-            case "$GITHUB_REF_NAME" in
-              v*-*) profile=release-fast ;;
-              *)    profile=release ;;
-            esac
+            profile=release
           fi
           echo "profile=$profile" >> "$GITHUB_OUTPUT"
 

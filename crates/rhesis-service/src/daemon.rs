@@ -16,7 +16,7 @@ use interprocess::local_socket::{
 
 use rhesis_constants::{PROTOCOL, SERVICE_SOCKET_NAME};
 use rhesis_languagetool::service::{
-    LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, WorkerStatus,
+    CompletionProvider, LanguageToolWorker, LanguageToolWorkerEvent, ServiceMessage, WorkerStatus,
 };
 use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::write_frame;
@@ -35,12 +35,6 @@ pub struct DaemonOptions {
     pub socket_name: String,
     pub store_path: PathBuf,
     pub idle_grace: Duration,
-    /// Recorded fixture id for the fake provider (the binary's `--fake-lt`
-    /// argument — passed through by the client harness when the client was
-    /// launched with the same flag); `None` runs the real LanguageTool
-    /// server. Test tiers pin it directly to stay hermetic — see the
-    /// Hermeticity section of AGENTS.md / TestingRefactor.md.
-    pub fake_fixture: Option<String>,
 }
 
 impl DaemonOptions {
@@ -49,18 +43,13 @@ impl DaemonOptions {
             socket_name: SERVICE_SOCKET_NAME.to_string(),
             store_path: Store::default_path().unwrap_or_default(),
             idle_grace: Duration::from_secs(5),
-            // Real LanguageTool server: only the harness seam sets a fixture.
-            fake_fixture: None,
         }
     }
 }
 
-/// How a session ended, reported to the accept loop.
 #[derive(Debug)]
 pub enum SessionEnd {
-    /// The client left on its own: the idle-grace countdown starts.
     Done,
-    /// The client asked the daemon to quit: exit as soon as it reports.
     Shutdown,
 }
 
@@ -91,14 +80,10 @@ pub struct DaemonState {
     pub(crate) receiver_slot: Mutex<Option<Receiver<ServiceMessage>>>,
 }
 
-/// Run the daemon to completion: bind, serve, and shut the worker down.
-/// Returns `Err` only for fatal setup errors (bind conflict, worker spawn
-/// failure) or a dead listener; a graceful exit (idle grace, `Shutdown`)
-/// returns `Ok(())`.
-pub fn run(options: &DaemonOptions) -> Result<(), String> {
-    // 1. Store: the daemon owns the settings file; hermetic callers pin it.
-    //    An empty path (no configuration root at construction) runs
-    //    defaults-only: warn once, never persist, never invent a location.
+pub fn deamon_run<P: CompletionProvider + 'static>(
+    options: &DaemonOptions,
+    provider: P,
+) -> Result<(), String> {
     let (store, persist) = if options.store_path.as_os_str().is_empty() {
         log::warn!("no configuration root; running with default settings, nothing persists");
         (Store::transient(), false)
@@ -107,14 +92,7 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
     };
     let stored = store.load();
 
-    // 2. Worker: LanguageTool manager thread, spawned with its channels.
-    //    The fake-vs-real decision is pinned in the options (the binary's
-    //    `--fake-lt` argument); the fixture itself is indexed inside the
-    //    worker thread, so a broken fixture degrades to live there.
-    let Some(worker) = LanguageToolWorker::default()
-        .with_fake_fixture(options.fake_fixture.clone())
-        .start()
-    else {
+    let Some(worker) = LanguageToolWorker::default().start(provider) else {
         return Err("LanguageTool worker failed to spawn".to_string());
     };
 
@@ -129,8 +107,6 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
         receiver_slot: Mutex::new(Some(worker.message_receiver)),
     });
 
-    // 3. Listener: nonblocking accept so the loop between attempts can
-    //    serve session-end signals and the grace countdown.
     let name = options
         .socket_name
         .clone()
@@ -149,20 +125,20 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
     log::info!("daemon listening on {:?}", options.socket_name);
 
     let (end_sender, end_receiver) = unbounded::<SessionEnd>();
-    let slot: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let slot = Arc::new(AtomicBool::new(false));
 
     let mut grace_since: Option<Instant> = None;
     let mut result = Ok(());
     loop {
         match listener.accept() {
             Ok(stream) => {
-                let occupied = *slot.lock().unwrap();
-                if occupied {
-                    second_client_refused(stream);
+                if slot
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    refuse_second_client(stream);
                     continue;
                 }
-                // Take the slot for the session; the pump releases it.
-                *slot.lock().unwrap() = true;
                 grace_since = None;
 
                 let session_slot = slot.clone();
@@ -179,7 +155,7 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
                         // Slot back to free: the never-started session
                         // cannot return it. Dropping the stream closes the
                         // connection, which is the client's answer.
-                        *slot.lock().unwrap() = false;
+                        slot.store(false, Ordering::SeqCst);
                     }
                 }
             }
@@ -216,9 +192,6 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
         }
     }
 
-    // 4. Worker reaping: unconditional on every exit path. The kill is
-    //    idempotent for an already-stopped worker; joining guarantees the
-    //    embedded JVM child is reaped before the process exits.
     log::info!("stopping the LanguageTool worker");
     if let Err(e) = state.event_sender.send(LanguageToolWorkerEvent::Kill) {
         log::warn!("worker event channel already gone: {e:?}");
@@ -226,18 +199,11 @@ pub fn run(options: &DaemonOptions) -> Result<(), String> {
     if let Err(e) = worker.thread.join() {
         result = result.and_then(|()| Err(format!("worker thread panicked: {e:?}")));
     }
+
     result
 }
 
-/// Busy handshake for a second client: answer with the version and the
-/// busy flag, then drop the stream (§3: one session; the client surfaces
-/// "service busy" instead of hanging).
-///
-/// Delivery of the busy frame is best-effort: dropping the stream can
-/// reset a connection whose own bytes are still arriving, so a client may
-/// observe the refusal as either the frame or a plain close — both mean
-/// "no session", which is what the reconnect logic needs.
-fn second_client_refused(stream: Stream) {
+fn refuse_second_client(stream: Stream) {
     log::info!("second client while a session is open; refusing");
     let mut stream = stream;
     let _ = write_frame(
@@ -247,5 +213,4 @@ fn second_client_refused(stream: Stream) {
             busy: true,
         },
     );
-    // `stream` dropped here closes the connection.
 }

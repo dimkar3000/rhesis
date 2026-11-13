@@ -44,7 +44,7 @@ pub fn run_suites() -> i32 {
     }
 
     // Render the suites with the same controls style and embedded icon theme
-    // as the app (`main.rs`). Without these the offscreen screenshots show
+    // as the app (`run.rs`). Without these the offscreen screenshots show
     // the plain Qt style: switches look like two adjacent boxes and the
     // icon-only reset/remove buttons come out as empty rectangles, which
     // reads as duplicated widgets.
@@ -57,7 +57,7 @@ pub fn run_suites() -> i32 {
     // derives the same path from its own location). Truncated per launch so
     // the directory always shows the latest run — a stale PASS from an
     // earlier build is worse than no image at all.
-    let screenshots_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("build/tests");
+    let screenshots_dir = project_root().join("build/tests");
     if let Err(e) = std::fs::remove_dir_all(&screenshots_dir) {
         if e.kind() != std::io::ErrorKind::NotFound {
             eprintln!(
@@ -92,14 +92,40 @@ pub fn run_suites() -> i32 {
     // behind the wrapper. The CStrings outlive the call (bound above the
     // block), contain no interior NULs, and the pointer array plus the
     // terminating null is an owned allocation.
-    unsafe {
+    let code = unsafe {
         rhesis_quick_test_main(
             argv_ptrs.len() as c_int - 1,
             argv_ptrs.as_mut_ptr(),
             name.as_ptr(),
             suite_dir.as_ptr(),
         )
+    };
+
+    // grabImage's save() writes the file but returns false on this Qt
+    // version, so its result gates nothing; success is judged by what
+    // landed on disk. A zero count with a passing Quick Test means every
+    // capture failed silently — exactly the failure a screenshot suite
+    // must never hide.
+    if code == 0 && screenshot_count(&screenshots_dir) == 0 {
+        eprintln!(
+            "ui-tests: Quick Test passed but no screenshots landed in {}",
+            screenshots_dir.display()
+        );
+        return 1;
     }
+
+    code
+}
+
+fn screenshot_count(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 extern "C" {
@@ -117,12 +143,23 @@ fn suite_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui")
 }
 
+/// Test outputs join the workspace's own `build/` tree (the boot tier's
+/// sandbox lives there too), not a build dir inside this crate: the
+/// workspace keeps every member under `crates/<name>`, so the root is
+/// always two ancestors up from the manifest dir.
+fn project_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("this crate always sits under crates/<name>")
+}
+
 /// The sandbox lives inside the build frame so `cargo clean`-adjacent churn
 /// never pollutes a real user configuration, and failing runs leave their
 /// state around for inspection (it is truncated at every launch).
 #[cfg(unix)]
 fn sandbox_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("build/ui-tests/harness-env")
+    project_root().join("build/ui-tests/harness-env")
 }
 
 /// Builds the CLI Quick Test expects: argv[0] is the process name, an

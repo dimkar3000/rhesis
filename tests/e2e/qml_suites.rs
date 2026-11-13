@@ -2,7 +2,7 @@
 //!
 //! Quick Test owns `QGuiApplication` and parses its own command line, so it
 //! cannot share a process with the Rust test harness: this target launches
-//! `rhesis-ui-runner` (a one-line shim over `rhesis::ui_tests::run_suites`)
+//! `rhesis-ui-runner` (a one-line shim over `rhesis_qt_client::ui_tests::run_suites`)
 //! and asserts its exit code. The runner keeps itself hermetic — it starts
 //! the in-process fixture daemon and redirects every XDG home into
 //! `build/ui-tests/harness-env` before Qt starts — so the child needs no
@@ -12,8 +12,7 @@
 //! instance in flight, so `--test-threads=1` is not required.
 
 // Windows ships its own Kirigami-free QML (src/interop/qml/windows/); this suite
-// targets the Kirigami pages, which are not compiled there. (Also,
-// `tests/e2e/common` is a symlink that Windows checkouts do not resolve.)
+// targets the Kirigami pages, which are not compiled there.
 #![cfg(not(windows))]
 
 use std::process::Command;
@@ -43,7 +42,7 @@ fn qml_suites_pass() {
     // A runner that found no suite at all still exits 0; require the
     // evidence that suites actually executed.
     assert!(
-        stdout.contains("Start testing of rhesis-ui-tests"),
+        stdout.contains("Start testing of rhesis-qt-client-tests"),
         "the runner reported no suite execution:\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
     );
 }

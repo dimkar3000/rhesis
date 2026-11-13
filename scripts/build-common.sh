@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # --- Configuration ---
-RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release-fast}"
+RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-}"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 
@@ -78,7 +78,7 @@ regenerate_translations() {
     local qml_files=()
     while IFS= read -r f; do
         qml_files+=("$f")
-    done < <(find "$PROJECT_DIR/src/interop/qml" -name '*.qml' | sort)
+    done < <(find "$PROJECT_DIR/crates/rhesis-qt-client/src/interop/qml" -name '*.qml' | sort)
     if [ "${#qml_files[@]}" -eq 0 ]; then
         echo "Warning: no QML files found; skipping translation regeneration" >&2
         return 0
@@ -284,7 +284,7 @@ install_app() {
     mkdir -p "$share_dir/applications"
     cp "$PROJECT_DIR/io.github.dimkar3000.rhesis.desktop" "$share_dir/applications/"
     mkdir -p "$share_dir/icons/hicolor/256x256/apps"
-    cp "$PROJECT_DIR/io.github.dimkar3000.rhesis.png" "$share_dir/icons/hicolor/256x256/apps/"
+    cp "$PROJECT_DIR/assets/io.github.dimkar3000.rhesis.png" "$share_dir/icons/hicolor/256x256/apps/"
     mkdir -p "$share_dir/metainfo"
     cp "$PROJECT_DIR/io.github.dimkar3000.rhesis.metainfo.xml" "$share_dir/metainfo/"
     mkdir -p "$share_dir/licenses/rhesis"
