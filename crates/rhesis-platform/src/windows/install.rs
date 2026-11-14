@@ -233,11 +233,10 @@ fn save(config_root: &Path, conf: &Conf) -> Result<(), std::io::Error> {
 }
 
 fn resolve(writes: bool) -> Option<Resolved> {
-    // Dev runs read their locations from `dev-install.conf` beside the
-    // working directory instead of probing the filesystem; the file is
-    // never written by dev builds.
+    // Dev runs never touch an install configuration; their locations come
+    // from the working directory alone.
     if cfg!(debug_assertions) {
-        return Some(dev_config());
+        return Some(dev_setup());
     }
 
     let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
@@ -305,57 +304,24 @@ fn derived_conf(derived: &Derived, autostart: Option<String>) -> Option<Conf> {
     })
 }
 
-/// Dev builds read their locations from `dev-install.conf` beside the
-/// working directory instead of probing the filesystem. Missing keys
-/// degrade: translations/languagetool to `None`, java to bare `java` from
-/// PATH. A missing file yields the same defaults.
-fn dev_config() -> Resolved {
-    let Ok(dir) = std::env::current_dir() else {
-        return dev_defaults();
-    };
-    let Ok(text) = fs::read_to_string(dir.join("dev-install.conf")) else {
-        return dev_defaults();
-    };
-    parse_dev_conf(&text)
-}
-
-fn dev_defaults() -> Resolved {
+/// Dev builds resolve from the working directory alone: translations from
+/// its `translations` folder (the build scripts compile the `.qm` catalogs
+/// next to the `.ts` sources); LanguageTool and java are left to the
+/// worker's own probing and `PATH`.
+fn dev_setup() -> Resolved {
+    let cwd = std::env::current_dir().ok();
     Resolved {
         flavor: Flavor::Windows,
-        translations_dir: None,
+        translations_dir: cwd.as_deref().and_then(dev_translations_dir),
         languagetool_dir: None,
         java: PathBuf::from("java"),
         autostart_record: None,
     }
 }
 
-fn parse_dev_conf(text: &str) -> Resolved {
-    let mut translations_dir = None;
-    let mut languagetool_dir = None;
-    let mut java = None;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        let value = value.trim();
-        match key.trim() {
-            KEY_TRANSLATIONS => translations_dir = non_empty(value).map(PathBuf::from),
-            KEY_LANGUAGETOOL => languagetool_dir = non_empty(value).map(PathBuf::from),
-            KEY_JAVA => java = non_empty(value).map(PathBuf::from),
-            _ => {}
-        }
-    }
-    Resolved {
-        flavor: Flavor::Windows,
-        translations_dir,
-        languagetool_dir,
-        java: java.unwrap_or_else(|| PathBuf::from("java")),
-        autostart_record: None,
-    }
+fn dev_translations_dir(dir: &Path) -> Option<PathBuf> {
+    let candidate = dir.join("translations");
+    candidate.is_dir().then_some(candidate)
 }
 
 /// Derivation for the running process (no environment injection needed on
@@ -452,5 +418,16 @@ mod tests {
             ..ours.clone()
         };
         assert!(!moved.meets(&derived));
+    }
+
+    #[test]
+    fn dev_translations_fall_back_to_the_working_directory() {
+        let root = std::env::temp_dir().join("rhesis-dev-translations-test-win");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("translations")).expect("scratch translations dir creatable");
+        assert_eq!(dev_translations_dir(&root), Some(root.join("translations")));
+
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(dev_translations_dir(&root), None, "no folder, no fallback");
     }
 }

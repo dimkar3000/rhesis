@@ -34,8 +34,6 @@ inline std::unique_ptr<QTextCharFormat> newUnderlinedFormat(const QString& color
     return fmt;
 }
 
-// Takes a reference (not a pointer) so the Rust bridge declaration stays a
-// safe function: the raw pointer is validated once at the call site.
 inline void replaceTextInDocument(QTextDocument& doc, int64_t start, int64_t end, const QString& replacement) {
     QTextCursor cursor(&doc);
     cursor.setPosition(start);
@@ -47,30 +45,14 @@ inline void appSetWindowIcon(QApplication& app, const QString& path) {
   app.setWindowIcon(QIcon(path));
 }
 
-// One entry point for the "keep running in the background" preference:
-// the requested state flows in explicitly. The source of truth is the
-// daemon's settings store; the boot snapshot and every mirrored Apply
-// (both via Rust's apply_settings paths) keep this in sync.
-//
-// With background running enabled, quitting on the last window being
-// hidden/closed must be disabled: hiding rhesis' window would otherwise
-// exit the whole app, killing the LanguageTool server other apps may use.
 inline void setBackgroundBehavior(bool enabled) {
     if (auto* guiApp = qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
         guiApp->setQuitOnLastWindowClosed(!enabled);
-        qInfo() << "background running:" << enabled
+        qDebug() << "background running:" << enabled
                 << "-> quitOnLastWindowClosed:" << !enabled;
     }
 }
 
-// Hide every visible top-level window without closing it (the close handler
-// in Root.qml decides hide vs. quit). Used by the --hidden CLI flag so
-// Rhesis starts straight into the tray. The primary mechanism for hidden
-// launches is Root.qml's `visible` gate — the window is never mapped at
-// all, and hiding an already-mapped window would only flash on X11. This
-// call remains for anything that ends up visible regardless. It requires
-// a system tray: without one the window stays visible, because hiding it
-// would strand the app (Root.qml's stranding rule mirrors this).
 inline void appHideRootWindow() {
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         qWarning() << "--hidden ignored: no system tray available";
@@ -84,10 +66,6 @@ inline void appHideRootWindow() {
     }
 }
 
-// Raise the main window (any top-level window does; Rhesis has exactly one)
-// on the GUI thread. Called either from the event loop (single-instance
-// "show" requests arrive there via CxxQtThread::queue) or before the event
-// loop starts.
 inline void appRaiseMainWindow() {
     const QList<QWindow*> topLevel = QGuiApplication::topLevelWindows();
     if (!topLevel.isEmpty()) {
@@ -165,9 +143,6 @@ inline bool applyLanguage(const QString& translationsDir, const QString& preferr
     return false;
 }
 
-// Templated so callers don't need to name the generated peer type: any
-// QObject-derived object (e.g. a QML-instantiated helper) resolves the
-// engine that owns it, with no static state anywhere.
 template <typename T>
 inline void retranslateForObject(T& object) {
     if (QQmlEngine* engine = qmlEngine(&object)) {
