@@ -181,17 +181,24 @@ at build time via the manifest.  The resulting bundle is exported to
 
 ### CI/CD
 
-A single workflow, `.github/workflows/build.yml`, is triggered on
-version tags (`v*`) or manually:
+One workflow, `.github/workflows/pipeline.yml`, drives everything:
 
-- Checks version consistency (`Cargo.toml`/`CHANGELOG.md` vs tag) for
-  final releases only, via `scripts/check-versions.sh`.
-- All flavors build with the `release` profile; `v*-*` tags are pre-releases,
-  which skip the version-consistency check.
-- Builds all four distribution flavors — Flatpak, AppImage, desktop
-  tarballs (global and `--local`), and the Windows installer + zip —
-  plus `runner.sh`. Every flavor bundles both binaries (client +
-  daemon).
+- Every push, PR and manual dispatch runs the common Linux job: the app
+  and test binaries are built once, cached, then the test tier runs in
+  the same workspace (`cargo fmt`, the daemon's headless-linkage gate,
+  `cargo test --workspace`).
+- The release path — the Windows payload build, per-flavor packaging and
+  the GitHub release — only runs on version tags (`v*`), or on a manual
+  dispatch that asks for it. Every packaging job waits on the common job,
+  so no artifact is generated before the tests are green.
+- Version consistency (`Cargo.toml`/`CHANGELOG.md` vs tag) is checked in
+  the build jobs for final releases only, via
+  `scripts/check-versions.sh`; `v*-*` tags are pre-releases, which skip
+  the check.
+- All flavors build with the `release` profile. Flatpak, AppImage and
+  desktop tarballs (global and `--local`) package in parallel Linux jobs;
+  the Windows zip and Inno Setup installer package in parallel Windows
+  jobs. Every flavor bundles both binaries (client + daemon).
 - On version tags, everything is attached to the GitHub release, with
   release notes generated from `CHANGELOG.md` (`scripts/release-body.py`).
 

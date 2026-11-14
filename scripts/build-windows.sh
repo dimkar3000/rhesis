@@ -30,19 +30,29 @@ esac
 # --- Parse arguments ---
 CLEAN_BUILD=false
 BUILD_INSTALLER=true
+# full = build + stage + zip + installer (the local one-shot); the *-only
+# modes exist for CI's split build/packaging jobs and consume the staged
+# payload a --stage-only run (or its cache restore) left behind.
+MODE="full"
 
 usage() {
     echo "Usage: $(basename "$0") [OPTIONS]"
     echo ""
     echo "Builds the Windows app and packages it as a portable zip and an"
     echo "Inno Setup installer. Run from Git Bash."
-    echo "Requires a Rust toolchain (MSVC), Qt 6.8+ (MSVC kit; QMAKE or qmake on PATH),"
-    echo "a JDK 17+ with jlink (JAVA_HOME), and Inno Setup 6 (ISCC.exe) for the installer."
+    echo "Without a mode flag everything runs in one go; the *-only modes"
+    echo "split the run for CI: stage produces the payload, zip/installer"
+    echo "package it. Requires a Rust toolchain (MSVC), Qt 6.8+ (MSVC kit;"
+    echo "QMAKE or qmake on PATH), a JDK 17+ with jlink (JAVA_HOME), and"
+    echo "Inno Setup 6 (ISCC.exe) for the installer."
     echo ""
     echo "Environment:"
     echo "  RUST_BUILD_TYPE  Cargo profile: release (default) or debug"
     echo ""
     echo "Options:"
+    echo "  --stage-only     Build and stage the payload (no zip, no installer)"
+    echo "  --zip-only       Build the zip from an already staged payload"
+    echo "  --installer-only Build the installer from an already staged payload"
     echo "  --no-installer  Only build the zip (skips the Inno Setup step)"
     echo "  --clean         Delete the Windows build artifacts and rebuild from scratch"
     echo "  --verbose       Show full command output (default: quiet)"
@@ -55,6 +65,9 @@ source "$SCRIPT_DIR/common.sh"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --stage-only) MODE=stage; shift ;;
+        --zip-only) MODE=zip; shift ;;
+        --installer-only) MODE=installer; shift ;;
         --no-installer) BUILD_INSTALLER=false; shift ;;
         --clean) CLEAN_BUILD=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
@@ -64,7 +77,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Locate the toolchain up front (steps may run in subshells) ---
+# --- Locate the toolchains lazily: only the modes that build or stage need
+# Qt and the JDK; the zip and installer modes only consume the staged
+# payload a --stage-only run (or its cache restore) left behind. ---
 find_qt_bin() {
     if [ -n "${QMAKE:-}" ]; then
         dirname "$(cygpath -u "$QMAKE")"
@@ -106,9 +121,15 @@ find_iscc() {
     return 1
 }
 
-QT_BIN="$(find_qt_bin)"
-JDK_DIR="$(find_jdk_dir)"
-export QMAKE="${QMAKE:-$(cygpath -w "$QT_BIN")\\qmake.exe}"
+QT_BIN=""
+JDK_DIR=""
+case "$MODE" in
+    full|stage)
+        QT_BIN="$(find_qt_bin)"
+        JDK_DIR="$(find_jdk_dir)"
+        export QMAKE="${QMAKE:-$(cygpath -w "$QT_BIN")\\qmake.exe}"
+        ;;
+esac
 
 case "$RUST_BUILD_TYPE" in
     debug|dev) CARGO_PROFILE=dev; PROFILE_DIR=debug ;;
@@ -117,6 +138,15 @@ esac
 
 # Windows-native tools (tar.exe, powershell, ISCC) need native paths.
 winpath() { cygpath -w "$1"; }
+
+# The packaged artifacts consume the staged payload; a packaging mode
+# without one means the stage run (or its cache restore) never happened.
+require_stage() {
+    if [ ! -f "$STAGE_DIR/rhesis.exe" ] || [ ! -f "$STAGE_DIR/rhesis-service.exe" ]; then
+        echo "Error: no staged payload at $STAGE_DIR; run --stage-only first (CI restores it from the payload cache)" >&2
+        return 1
+    fi
+}
 
 # --- Compile the translation catalogs ---
 # Never runs lupdate: like CI on Linux (SKIP_LUPDATE), packaging compiles the
@@ -284,30 +314,63 @@ main() {
     echo "=== Windows Build Script ==="
     echo "Version: $VERSION"
     echo "Cargo profile: $CARGO_PROFILE"
-    echo "Qt: $QT_BIN"
-    echo "JDK: $JDK_DIR"
+    case "$MODE" in
+        full|stage) echo "Qt: $QT_BIN"; echo "JDK: $JDK_DIR" ;;
+    esac
     echo ""
 
+    if [ "$BUILD_INSTALLER" = false ] && [ "$MODE" = installer ]; then
+        echo "Error: --installer-only with --no-installer does nothing" >&2
+        exit 1
+    fi
+
     if [ "$CLEAN_BUILD" = true ]; then
+        case "$MODE" in
+            zip|installer)
+                echo "Error: --clean would delete the staged payload a packaging mode needs; use it on a stage or full run" >&2
+                exit 1
+                ;;
+        esac
         echo "Cleaning Windows build artifacts..."
         rm -rf "$ARTIFACTS_DIR" "$STAGE_PARENT"
     fi
-    mkdir -p "$ARTIFACTS_DIR"
 
-    step "Compiling translations" build_translations
-    step "Building application" build_rust_app
-    step "Setting up LanguageTool" setup_languagetool
-    step "Creating trimmed JRE" create_trimmed_jre
-    step "Staging application files" stage_payload
-    step "Building portable zip" build_zip
-    if [ "$BUILD_INSTALLER" = true ]; then
-        step "Fetching VC++ runtime" download_vcredist
-        step "Building installer" build_installer
-    fi
+    case "$MODE" in
+        full|stage)
+            mkdir -p "$ARTIFACTS_DIR"
+            step "Compiling translations" build_translations
+            step "Building application" build_rust_app
+            step "Setting up LanguageTool" setup_languagetool
+            step "Creating trimmed JRE" create_trimmed_jre
+            step "Staging application files" stage_payload
+            ;;
+    esac
+
+    case "$MODE" in
+        zip|full)
+            mkdir -p "$ARTIFACTS_DIR"
+            require_stage
+            step "Building portable zip" build_zip
+            ;;
+    esac
+
+    case "$MODE" in
+        installer|full)
+            mkdir -p "$ARTIFACTS_DIR"
+            require_stage
+            if [ "$BUILD_INSTALLER" = true ]; then
+                step "Fetching VC++ runtime" download_vcredist
+                step "Building installer" build_installer
+            fi
+            ;;
+    esac
 
     echo ""
     echo "=== Build Complete ==="
-    ls -lh "$ARTIFACTS_DIR" | grep -E "\.(zip|exe)$" || true
+    case "$MODE" in
+        stage) ls -ld "$STAGE_DIR" ;;
+        *) ls -lh "$ARTIFACTS_DIR" | grep -E "\.(zip|exe)$" || true ;;
+    esac
 }
 
 main "$@"

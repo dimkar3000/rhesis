@@ -1,15 +1,17 @@
-name: Build app
+name: Linux build
 
-# Shared build step for every pipeline. Callers ask for a mode and get a
-# populated build tree back through the cache:
+# The Linux build step the pipeline (`pipeline.yml`) calls, in two modes:
 #
-#   test    — `cargo test --no-run`, i.e. every test target plus the app and
-#             the QML runner, compiled once, then `cargo clippy` so the lint
-#             pass's check-mode artifacts are cached too. The test job then
-#             only runs the binaries and the formatter.
+#   test    — the common job, run on every ref: `cargo test --workspace
+#             --no-run` (every test target plus the app and the QML runner,
+#             compiled once), `cargo clippy` so the lint pass's check-mode
+#             artifacts are cached with the build, then — after the cache
+#             save, in the same workspace — the test tier itself: fmt, the
+#             daemon's headless ldd gate and the test run. A red test run
+#             still banks its compile for the next one.
 #   release — `scripts/build-common.sh`: the app (CMake + cargo), fastText,
 #             the language model, LanguageTool and the trimmed JRE, exactly
-#             what the packaging steps consume.
+#             what the packaging jobs consume.
 #
 # Both modes use the same cache layout, keyed by profile and Cargo.lock, so
 # a consuming job restores the tree instead of rebuilding it. A caller
@@ -30,13 +32,13 @@ on:
     outputs:
       cache-key:
         description: "Key of the cache this build populated"
-        value: ${{ jobs.build.outputs.cache-key }}
+        value: ${{ jobs.build-linux.outputs.cache-key }}
       profile:
         description: "Effective Cargo profile (debug, release)"
-        value: ${{ jobs.build.outputs.profile }}
+        value: ${{ jobs.build-linux.outputs.profile }}
 
 jobs:
-  build:
+  build-linux:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
@@ -60,6 +62,12 @@ jobs:
 
       - name: Allow git in container workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check version consistency (final releases only)
+        # Same gate as the windows build: the packaging path must never
+        # start on a tag whose version does not match the sources.
+        if: inputs.mode == 'release' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: ./scripts/check-versions.sh
 
       - name: Resolve profile
         id: profile
@@ -152,3 +160,45 @@ jobs:
         with:
           path: ${{ steps.cache-paths.outputs.paths }}
           key: ${{ steps.cache-key.outputs.save-key }}
+
+      # The test tier runs after the cache save, in the same job: the
+      # compiled tree is already in the workspace, so the run costs no
+      # restore, and a red run still banks its compile for the next one.
+      - name: Formatting
+        if: inputs.mode == 'test'
+        run: cargo fmt --workspace --check
+
+      - name: Daemon binary links no Qt (headless check)
+        if: inputs.mode == 'test'
+        # The daemon bin lives in the Qt workspace (`src/rhesis-server.rs`,
+        # root package) and stays Qt-free only while it never references the
+        # `rhesis-qt-client` crate: any use — even a plain const — pulls the
+        # bridge's #[link] registrations in, and libQt6* lands in NEEDED on
+        # the CI linker (bfd defaults to --no-as-needed). The pull-in is
+        # invisible on the rustc command line; this ldd gate is the only
+        # thing that catches it. The client binary's QuickTest link gate
+        # stays local (AGENTS.md).
+        env:
+          CARGO_TARGET_DIR: build/target
+        run: |
+          binary=build/target/debug/rhesis-service
+          if ! [ -x "$binary" ]; then
+            echo "ERROR: $binary not built; the shared build must produce it" >&2
+            exit 1
+          fi
+          if ldd "$binary" | grep -iE 'qt[0-9]|quicktest'; then
+            echo "ERROR: rhesis-service links Qt (see above); the daemon must stay headless" >&2
+            exit 1
+          fi
+
+      - name: Tests
+        if: inputs.mode == 'test'
+        # `qml_suites_pass` is the only test in the QML page-suite target.
+        # That tier renders screenshots for manual inspection, which is a
+        # local-development tool; CI runs every assertion tier but does not
+        # generate images. Run it locally with:
+        #   cargo test --test qml-suites
+        env:
+          CARGO_TARGET_DIR: build/target
+          QT_QPA_PLATFORM: offscreen
+        run: cargo test --workspace -- --skip qml_suites_pass

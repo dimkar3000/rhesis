@@ -14,7 +14,7 @@ usage() {
     echo "Builds every Linux package in one go: Flatpak, AppImage, and the"
     echo "desktop tarball (global and per-user --local variants)."
     echo "Requires the shared build artifacts (run scripts/build-common.sh first"
-    echo "or restore them from the build-app.yml CI cache) plus Flatpak."
+    echo "or restore them from the build-linux.yml CI cache) plus Flatpak."
     echo ""
     echo "Environment:"
     echo "  RUST_BUILD_TYPE  Must match the profile the shared build used"

@@ -1,0 +1,394 @@
+name: Pipeline
+
+# One flow for everything. The common Linux job (build + the test tier)
+# runs on every push, every PR and every dispatch; the release path — the
+# Windows staged payload, the five per-flavor packaging jobs and the GitHub
+# release — only runs on version tag pushes, or on a dispatch that asks for
+# it, so a feature branch pays exactly the common job and nothing more.
+# Every packaging job needs the common job: no final artifact is generated
+# before the tests are green.
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Also run the release path (packages all flavors; uploads to a release only on version tags)"
+        required: false
+        type: boolean
+        default: false
+
+# A newer push supersedes an in-flight run on the same ref.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Identical cargo environment in every job that compiles: incremental
+  # artifacts are useless across runs, and debug info would dwarf the
+  # caches — including the windows one, which carries target/ itself.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+# The release path runs for version tags, and for a dispatch that asks for
+# packaging. The condition is repeated on every release-path job below.
+jobs:
+  # ── Common build + tests — every ref ─────────────────────────────────
+  linux:
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      mode: test
+
+  # ── Release path ─────────────────────────────────────────────────────
+  # Both platform builds wait for the common job: on a tag, a red test
+  # step stops the release before a single artifact binary is built.
+  build-linux:
+    needs: [linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      mode: release
+
+  build-windows:
+    needs: [linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: windows-latest
+    defaults:
+      run:
+        # scripts/*.sh are bash; Git Bash ships with the runner.
+        shell: bash
+    outputs:
+      payload-cache-key: ${{ steps.windows-cache-key.outputs.payload-save-key }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency (final releases only)
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: ./scripts/check-versions.sh
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Install JDK (for the trimmed JRE)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Windows cache keys
+        id: windows-cache-key
+        run: |
+          # Same scheme as the Linux build: the Cargo.lock hash pins the
+          # dependency graph for the restore, the run id keeps the save
+          # unique so this run's tree is the one consumers get. The payload
+          # is rebuilt from scratch on every run (stage_payload wipes the
+          # stage dir), so nothing restores it here — only its packaging
+          # consumers do, by exact key only: a prefix hit would package
+          # another commit's binaries.
+          base="rhesis-${{ runner.os }}-release-${{ hashFiles('Cargo.lock') }}"
+          echo "cargo-restore-key=$base" >> "$GITHUB_OUTPUT"
+          echo "cargo-save-key=$base-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+          echo "payload-save-key=rhesis-${{ runner.os }}-payload-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore windows cargo cache
+        uses: actions/cache/restore@v4
+        with:
+          # Same paths, same order as the save step below.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.windows-cache-key.outputs.cargo-restore-key }}
+          restore-keys: |
+            ${{ steps.windows-cache-key.outputs.cargo-restore-key }}-
+            rhesis-${{ runner.os }}-release-
+
+      - name: Build and stage the Windows payload
+        env:
+          RUST_BUILD_TYPE: release
+        run: ./scripts/build-windows.sh --stage-only --verbose --no-spinner
+
+      - name: Save windows cargo cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.windows-cache-key.outputs.cargo-save-key }}
+
+      - name: Save windows payload cache
+        uses: actions/cache/save@v4
+        with:
+          # Same paths, same order as the two packaging restores below: the
+          # path list is hashed into the cache version, so any reordering
+          # turns their exact-key restores into misses.
+          path: |
+            build/windows-stage
+            build/LanguageTool-6.6.zip
+          key: ${{ steps.windows-cache-key.outputs.payload-save-key }}
+
+  # One packaging job per flavor, each uploading exactly one artifact the
+  # release job collects. The Linux flavors restore the release tree that
+  # build-linux cached and re-run build-common.sh incrementally inside
+  # their script; the Windows flavors restore the staged payload.
+  flatpak:
+    needs: [linux, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+      # flatpak-builder's bubblewrap sandbox needs privileges inside the
+      # container.
+      options: --privileged
+    env:
+      # Never mutate translation sources in clean-room builds: compile the
+      # committed .ts files only (the container's lupdate lacks QML support
+      # and would otherwise empty them). Local builds still run lupdate.
+      SKIP_LUPDATE: 1
+      # The profile the release build used; the packaging scripts must
+      # match it.
+      RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + tags: the packaging script re-runs
+          # build-common.sh, whose metainfo regen resolves historic release
+          # dates from git tags.
+          fetch-depth: 0
+
+      - name: Allow git in container workspace
+        # The KDE SDK container runs as a different UID than the checkout
+        # owner, so git refuses to work ("dubious ownership") unless told
+        # the workspace is safe.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          # Same paths, same order as the release save in build-linux.yml:
+          # actions/cache hashes the path list into the cache version, so a
+          # reordering turns every restore into a miss.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ needs.build-linux.outputs.cache-key }}
+
+      - name: Build Flatpak
+        # The CI image preinstalls the flatpak runtimes.
+        run: ./scripts/build-flatpak.sh --no-runtimes --verbose --no-spinner
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: build/artifacts/flatpak/*.flatpak
+
+  appimage:
+    needs: [linux, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    env:
+      # The AppImage tools run without FUSE inside the container when they
+      # extract themselves instead of mounting.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      SKIP_LUPDATE: 1
+      RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Allow git in container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ needs.build-linux.outputs.cache-key }}
+
+      - name: Build AppImage
+        # The tools are pre-installed in the CI image; without the paths the
+        # script would download them.
+        run: |
+          ./scripts/build-appimage.sh --verbose --no-spinner \
+            --linuxdeploy /opt/appimage-tools/linuxdeploy-x86_64.AppImage \
+            --appimagetool /opt/appimage-tools/appimagetool-x86_64.AppImage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: build/artifacts/appimage/*.AppImage
+
+  desktop:
+    needs: [linux, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    env:
+      SKIP_LUPDATE: 1
+      RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Allow git in container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ needs.build-linux.outputs.cache-key }}
+
+      - name: Build desktop tarballs (system layout)
+        run: ./scripts/build-desktop.sh --verbose --no-spinner
+
+      - name: Build desktop tarballs (local layout)
+        run: ./scripts/build-desktop.sh --local --verbose --no-spinner
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop
+          path: build/artifacts/desktop/*.tar.gz
+
+  windows-zip:
+    needs: [linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore windows payload cache
+        uses: actions/cache/restore@v4
+        with:
+          # Exact key only: a prefix fallback could restore a payload built
+          # from another commit and package it. Same paths, same order as
+          # the payload save in build-windows.
+          path: |
+            build/windows-stage
+            build/LanguageTool-6.6.zip
+          key: ${{ needs.build-windows.outputs.payload-cache-key }}
+
+      - name: Build Windows zip
+        run: ./scripts/build-windows.sh --zip-only --verbose --no-spinner
+
+      - name: Upload Windows zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: build/artifacts/windows/*.zip
+
+  windows-installer:
+    needs: [linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Restore windows payload cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/windows-stage
+            build/LanguageTool-6.6.zip
+          key: ${{ needs.build-windows.outputs.payload-cache-key }}
+
+      - name: Build Windows installer
+        run: ./scripts/build-windows.sh --installer-only --verbose --no-spinner
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: build/artifacts/windows/*-setup.exe
+
+  release:
+    needs: [flatpak, appimage, desktop, windows-zip, windows-installer]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          cp artifacts/flatpak/*.flatpak release/
+          cp artifacts/appimage/*.AppImage release/
+          cp artifacts/desktop/*.tar.gz release/
+          cp artifacts/windows-zip/*.zip release/
+          cp artifacts/windows-installer/*-setup.exe release/
+          chmod +x scripts/runner.sh
+          cp scripts/runner.sh release/runner.sh
+          ls -lh release/
+
+      - name: Generate release body from CHANGELOG
+        if: ${{ !contains(github.ref_name, 'test') }}
+        run: python3 scripts/release-body.py CHANGELOG.md "${{ github.ref_name }}" > release_body.md
+
+      - name: Placeholder body for test releases
+        if: ${{ contains(github.ref_name, 'test') }}
+        run: echo "Test build ${{ github.ref_name }}" > release_body.md
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release_body.md
