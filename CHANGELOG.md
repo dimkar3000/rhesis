@@ -2,11 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.0]
-- feat: split into a headless service daemon (rhesis-service, owns the LanguageTool server and all settings) and a thin Qt client; the server outlives the UI and the UI reconnects automatically
-- chore: client and daemon talk over a local socket with a strict hello handshake and a single client slot
-- chore: tray gains a "Quit service" action and a disconnected state indicator
-- chore: every package (Flatpak, AppImage, desktop tarball + runner, windows installer and zip) ships both binaries
+## [1.0.0] - 2026-11-16
+- fix: fix issues created by re-write
+- chore: improve ci
+- chore: rework CI: one pipeline, tests in the common build
+- chore: small cleanup
+- chore: rhesis-service review is one, last the rhseis-qt-client
+- chore: rhesis-service review 1
+- chore: finished reviewing of protocol + seperate crate for common contants
+- chore: finished reviewing rhesis-protocol
+- fix: fix for tests
+- chore: reviewed platform crate
+- fix: remove not used SetPort
+- chore: work no languagetool
+- chore: chore remove redundant re-export
+- chore: cargo fmt
+- chore: organize constants
+- chore: small rework
+- feat: align settings page toggles for linux
+- refactor: fix ci builds
+- refactor: client + server design
 
 ## [0.6.0] - 2026-11-01
 - windows support

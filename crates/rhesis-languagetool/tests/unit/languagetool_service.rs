@@ -379,7 +379,7 @@ fn stop_event_reports_stopped() {
 #[test]
 fn start_failures_latch_to_failed_after_three() {
     // Occupy a port so the embedded server can never bind it: every Start
-    // attempt fails fast (early exit) instead of waiting out the timeout.
+    // attempt spends the adoption poll on the squatter and then fails.
     let _occupant = TcpListener::bind(("127.0.0.1", 0)).expect("bind occupant for failure test");
     let bad_port = _occupant.local_addr().unwrap().port();
     let handles = start_worker_with_timeout(Duration::from_secs(2));
@@ -391,11 +391,11 @@ fn start_failures_latch_to_failed_after_three() {
         Duration::from_secs(5),
     );
 
-    // Point the worker at the occupied port: the restart attempt itself
-    // fails fast and consumes budget entry 1 (RestartLocalServer resets the
-    // budget before trying, the spawn sees the busy port and, with no
-    // LanguageTool to adopt, returns to Stopped). The remaining failures
-    // accumulate with Start alone — from Stopped, Start resets nothing.
+    // Point the worker at the occupied port: the restart attempt polls the
+    // squatter, gets no LanguageTool to adopt and consumes budget entry 1
+    // (RestartLocalServer resets the budget before trying). The remaining
+    // failures accumulate with Start alone — from Stopped, Start resets
+    // nothing.
     handles
         .event_sender
         .send(LanguageToolWorkerEvent::RestartLocalServer(bad_port))

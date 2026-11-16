@@ -299,7 +299,6 @@ Controls.Page {
 
         closeRequested();
     }
-    }
 
     header: Controls.ToolBar {
         leftPadding: 8

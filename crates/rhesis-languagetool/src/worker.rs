@@ -17,7 +17,7 @@ use crate::worker_status::WorkerStatus;
 
 use crate::{
     completion_provider::CompletionProvider,
-    constants::{FASTTEXT_LAYOUTS, MAX_START_FAILURES},
+    constants::{ADOPTION_TIMEOUT, FASTTEXT_LAYOUTS, MAX_START_FAILURES},
     service::{ServiceMessage, ServiceSuggestion},
 };
 
@@ -438,6 +438,45 @@ impl LanguageToolWorker {
         }
     }
 
+    /// Poll a foreign server holding the port until it answers a health check.
+    fn poll_foreign_server<P: CompletionProvider>(
+        &mut self,
+        provider: &mut P,
+        runtime: &tokio::runtime::Runtime,
+    ) -> PollOutcome {
+        let deadline = Instant::now() + self.startup_timeout.min(ADOPTION_TIMEOUT);
+        loop {
+            match self.event_receiver.recv_timeout(Duration::from_millis(300)) {
+                Ok(LanguageToolWorkerEvent::UpdateSuggestions(_)) => (),
+                Ok(LanguageToolWorkerEvent::UpdateColors(colors)) => provider.set_colors(colors),
+                Ok(LanguageToolWorkerEvent::Kill) => {
+                    self.terminate_child();
+                    let _ = self.event_sender.send(LanguageToolWorkerEvent::Kill);
+                    return PollOutcome::Aborted(WorkerStatus::Stopped);
+                }
+                Ok(LanguageToolWorkerEvent::Stop)
+                | Ok(LanguageToolWorkerEvent::StopLocalServer) => {
+                    self.terminate_child();
+                    self.consecutive_failures = 0;
+                    return PollOutcome::Aborted(WorkerStatus::Stopped);
+                }
+                Ok(other) => {
+                    // Defer any other lifecycle event back to the main loop.
+                    let _ = self.event_sender.send(other);
+                    self.consecutive_failures = 0;
+                    return PollOutcome::Aborted(WorkerStatus::Stopped);
+                }
+                Err(_) => {}
+            }
+            if runtime.block_on(provider.health_check_async()) {
+                return PollOutcome::Adopted;
+            }
+            if Instant::now() >= deadline {
+                return PollOutcome::TimedOut;
+            }
+        }
+    }
+
     fn verify_remote<P: CompletionProvider>(
         &mut self,
         provider: &mut P,
@@ -523,19 +562,27 @@ impl LanguageToolWorker {
 
             if !Self::port_is_free(self.local_port) {
                 provider.update_address(&self.active_address());
-                if runtime.block_on(provider.health_check_async()) {
-                    log::info!(
-                        "adopting LanguageTool already running on port {}",
-                        self.local_port
-                    );
-                    self.record_success();
-                    return;
+                match self.poll_foreign_server(provider, runtime) {
+                    PollOutcome::Adopted => {
+                        log::info!(
+                            "adopting LanguageTool already running on port {}",
+                            self.local_port
+                        );
+                        self.record_success();
+                        return;
+                    }
+                    PollOutcome::Aborted(status) => {
+                        self.emit_status(status);
+                        return;
+                    }
+                    PollOutcome::TimedOut => {
+                        self.record_failure(format!(
+                            "port {} is already in use and no LanguageTool answers there",
+                            self.local_port
+                        ));
+                        return;
+                    }
                 }
-                self.record_failure(format!(
-                    "port {} is already in use and no LanguageTool answers there",
-                    self.local_port
-                ));
-                return;
             }
 
             let child = match Self::spawn_server(self.local_port) {
@@ -722,6 +769,7 @@ impl LanguageToolWorker {
 
         let mut command = Command::new(Self::java_executable());
         command.args([
+            "-XX:-TieredCompilation",
             "-cp",
             "languagetool-server.jar",
             "org.languagetool.server.HTTPServer",
@@ -740,6 +788,7 @@ impl LanguageToolWorker {
         // A GUI app has no console: Windows would open a console window
         // for the JVM (no-op everywhere else).
         rhesis_platform::process::suppress_console(&mut command);
+        rhesis_platform::process::kill_child_on_parent_exit(&mut command);
 
         let mut child = match command.spawn() {
             Ok(c) => c,
@@ -851,6 +900,12 @@ impl LanguageToolWorker {
 enum Outcome {
     Continue,
     Stop,
+}
+
+enum PollOutcome {
+    Adopted,
+    Aborted(WorkerStatus),
+    TimedOut,
 }
 
 enum VerifyOutcome {

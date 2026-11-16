@@ -104,7 +104,11 @@ Item {
         id: hoverMouse
         anchors.fill: parent
         hoverEnabled: true
-        acceptedButtons: Qt.NoButton
+        acceptedButtons: Qt.LeftButton
+        onClicked: {
+            if (root.canRetry && root.helper)
+                root.helper.retry_server();
+        }
     }
 
     Controls.ToolTip {

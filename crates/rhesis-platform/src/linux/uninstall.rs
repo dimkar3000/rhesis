@@ -19,10 +19,9 @@ use super::install::{self, InstallationFlavor, InstallationSetup};
 use super::{autostart, paths};
 
 /// Remove this install per its flavor, or fail with a user-facing message
-/// (development builds have nothing installed). `None` means the running
-/// binary could not be located at all.
-pub fn uninstall(resolved: Option<&InstallationSetup>) -> Result<String, String> {
-    let Some(resolved) = resolved else {
+/// (development builds have nothing installed).
+pub fn uninstall() -> Result<String, String> {
+    let Some(resolved) = InstallationSetup::read_only() else {
         return Err("could not determine this install's location; nothing was removed".to_string());
     };
     match resolved.flavor {
@@ -171,6 +170,9 @@ fn apps_desktop_files(flavor: &InstallationFlavor) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::path::Path;
+    use std::sync::{MutexGuard, PoisonError};
 
     /// The dev guard: nothing installed means the local uninstall refuses
     /// instead of deleting the development working tree.
@@ -182,5 +184,66 @@ mod tests {
                 .unwrap_err()
                 .starts_with("development build"));
         }
+    }
+
+    // The AppImage path pins the same process-global variables as the
+    // autostart tests, so it takes the shared lock.
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        xdg: Option<OsString>,
+        appimage: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn pin(root: &Path, image: &Path) -> Self {
+            let lock = autostart::ENV_LOCK
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let xdg = env::var_os("XDG_CONFIG_HOME");
+            let appimage = env::var_os("APPIMAGE");
+            env::set_var("XDG_CONFIG_HOME", root);
+            env::set_var("APPIMAGE", image);
+            Self {
+                _lock: lock,
+                xdg,
+                appimage,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.xdg.take() {
+                Some(v) => env::set_var("XDG_CONFIG_HOME", v),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+            match self.appimage.take() {
+                Some(v) => env::set_var("APPIMAGE", v),
+                None => env::remove_var("APPIMAGE"),
+            }
+        }
+    }
+
+    #[test]
+    fn appimage_uninstall_removes_entry_and_image() {
+        let root = std::env::temp_dir().join("rhesis-uninstall-appimage");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("autostart")).expect("scratch autostart dir creatable");
+        let image = root.join("Rhesis.AppImage");
+        fs::write(&image, b"image").expect("scratch image creatable");
+        let entry = root.join("autostart").join(format!("{APP_ID}.desktop"));
+        fs::write(
+            &entry,
+            format!("[Desktop Entry]\nExec={}\n", image.display()),
+        )
+        .expect("scratch entry creatable");
+
+        let _env = EnvGuard::pin(&root, &image);
+
+        let message = uninstall_appimage().expect("the AppImage uninstall succeeds");
+        assert!(message.contains("removed the AppImage"), "{message}");
+        assert!(message.contains("the autostart entry"), "{message}");
+        assert!(!image.exists());
+        assert!(!entry.exists());
     }
 }

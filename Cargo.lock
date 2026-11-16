@@ -1535,13 +1535,14 @@ dependencies = [
 
 [[package]]
 name = "rhesis"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "cxx",
  "cxx-qt-lib",
  "cxx-qt-lib-extras",
  "env_logger",
  "log",
+ "qt-build-utils",
  "rhesis-constants",
  "rhesis-languagetool",
  "rhesis-platform",
@@ -1552,11 +1553,11 @@ dependencies = [
 
 [[package]]
 name = "rhesis-constants"
-version = "0.6.0"
+version = "1.0.0"
 
 [[package]]
 name = "rhesis-languagetool"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "crossbeam",
  "log",
@@ -1571,16 +1572,17 @@ dependencies = [
 
 [[package]]
 name = "rhesis-platform"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "app-single-instance",
+ "libc",
  "log",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "rhesis-protocol"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "postcard",
  "rhesis-constants",
@@ -1590,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "rhesis-qt-client"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "crossbeam",
  "cxx",
@@ -1603,6 +1605,7 @@ dependencies = [
  "interprocess",
  "lazy_static",
  "log",
+ "qt-build-utils",
  "rhesis-constants",
  "rhesis-platform",
  "rhesis-protocol",
@@ -1612,7 +1615,7 @@ dependencies = [
 
 [[package]]
 name = "rhesis-service"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "crossbeam",
  "interprocess",
@@ -1628,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "rhesis-settings"
-version = "0.6.0"
+version = "1.0.0"
 dependencies = [
  "log",
  "rhesis-constants",

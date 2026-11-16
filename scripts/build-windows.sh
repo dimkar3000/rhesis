@@ -43,7 +43,7 @@ NUMERIC_VERSION=$(echo "$VERSION" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+)([-+]
 case "${GITHUB_REF_NAME:-}" in
     v*-*)
         VERSION="${GITHUB_REF_NAME#v}"
-        # A prerelease tag like v0.7.0-rc.2 becomes numeric 0.7.0.2 so Inno
+        # A prerelease tag like v1.0.0-rc.1 becomes numeric 1.0.0.1 so Inno
         # Setup accepts it as a file version.
         NUMERIC_VERSION=$(echo "$VERSION" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$/\1.\2.\3.\4/')
         ;;

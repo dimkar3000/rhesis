@@ -1,9 +1,15 @@
 //! Worker-crate constants: tuning knobs, fallback values and the fixture
 //! seam identifiers.
 
+use std::time::Duration;
+
 /// How many consecutive start attempts may fail before the worker gives up
 /// and latches into `Failed`. Reset by `Stop` and `Retry`.
 pub const MAX_START_FAILURES: u32 = 3;
+
+/// How long a foreign server holding the local port is given to answer the
+/// adoption probe. On startup the app may need to wait longer
+pub const ADOPTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The color a recommendation gets when neither its rule id nor its
 /// category id matches an entry of the user's color table: the default red

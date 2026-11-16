@@ -52,6 +52,10 @@ Controls.ApplicationWindow {
     readonly property bool hiddenLaunch:
         Qt.application.arguments.indexOf("--hidden") !== -1
 
+    // Background hosting offers the tray always; a hidden launch does
+    // too: the tray is the only way back in for a hidden window.
+    readonly property bool _shouldShowTray: (messagingHelper.background && messagingHelper.embedded) || hiddenLaunch
+
     // Tray-hosted background running: while the embedded LanguageTool server
     // keeps running behind a closed window, the tray icon is the way back
     // in (and the only place to shut the hosted server down gracefully).
@@ -77,7 +81,7 @@ Controls.ApplicationWindow {
 
         // Background hosting offers the tray always; a hidden launch does
         // too: the tray is the only way back in for a hidden window.
-        visible: (messagingHelper.background && messagingHelper.embedded) || hiddenLaunch
+        visible: _shouldShowTray
 
         // Must be a real "qrc:" URL: the ":/..." resource shorthand is not
         // resolved by Qt.labs.platform's icon loader.
@@ -103,6 +107,11 @@ Controls.ApplicationWindow {
         }
 
         menu: Platform.Menu {
+            // Qt.labs.platform Menu.visible defaults to true; the KDE tray
+            // integration applies that default when the item registers,
+            // popping the menu up as a stray window and stealing the
+            // window's focus. Only Plasma may open the menu, on demand.
+            visible: false
             Platform.MenuItem {
                 text: qsTr("tray_show")
                 onTriggered: root.showWindow()

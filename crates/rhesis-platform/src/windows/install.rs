@@ -25,20 +25,20 @@ const KEY_AUTOSTART: &str = "autostart-exec";
 /// The single Windows payload flavor: whether a portable zip or the Inno
 /// Setup installation produced it, the layout is the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Flavor {
+pub enum InstallationFlavor {
     Windows,
 }
 
-impl Flavor {
+impl InstallationFlavor {
     pub fn name(self) -> &'static str {
         match self {
-            Flavor::Windows => "windows",
+            InstallationFlavor::Windows => "windows",
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Flavor> {
+    pub(crate) fn parse(value: &str) -> Option<InstallationFlavor> {
         match value {
-            "windows" => Some(Flavor::Windows),
+            "windows" => Some(InstallationFlavor::Windows),
             _ => None,
         }
     }
@@ -47,8 +47,8 @@ impl Flavor {
 /// Everything the running process needs from its installation after one
 /// successful resolution.
 #[derive(Debug, Clone)]
-pub struct Resolved {
-    pub flavor: Flavor,
+pub struct InstallationSetup {
+    pub flavor: InstallationFlavor,
     /// Directory of the compiled `rhesis_<locale>.qm` catalogs.
     pub translations_dir: Option<PathBuf>,
     /// LanguageTool payload directory (`languagetool-server.jar` lives
@@ -60,6 +60,94 @@ pub struct Resolved {
     /// entry, when the on-disk configuration describes this very copy —
     /// a record written by another copy never leaks.
     pub autostart_record: Option<String>,
+}
+
+impl InstallationSetup {
+    /// Client entry point: resolve the install and keep the configuration
+    /// on disk in sync with it (seed on first run, write back when the
+    /// payload moved). Dev builds (`cargo run` / `cargo test`) resolve
+    /// purely and never touch the file.
+    pub fn ensure() -> Option<InstallationSetup> {
+        Self::resolve(true)
+    }
+
+    /// Daemon entry point: resolve read-only. Same resolution as
+    /// [`ensure`], never writing the configuration file.
+    pub fn read_only() -> Option<InstallationSetup> {
+        Self::resolve(false)
+    }
+
+    /// The configuration for this install, or `None` when the derivation
+    /// has no payload locations (a dev run without `translations`).
+    fn conf_from(&self, autostart: Option<String>) -> Option<Conf> {
+        Some(Conf {
+            flavor: self.flavor,
+            translations: self.translations_dir.clone()?,
+            languagetool: self.languagetool_dir.clone()?,
+            java: self.java.clone(),
+            autostart,
+        })
+    }
+
+    fn resolve(writes: bool) -> Option<InstallationSetup> {
+        // Dev runs never touch an install configuration; their locations
+        // come from the working directory alone.
+        if cfg!(debug_assertions) {
+            return Some(dev_setup());
+        }
+
+        let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
+        let derived = derive(&exe_dir);
+
+        let Some(config_root) = paths::config_dir() else {
+            log::warn!("APPDATA is not set; resolving paths without persisting");
+            return Some(derived);
+        };
+
+        match load(&config_root) {
+            // Exactly this copy: the read path, autostart record included.
+            Some(conf) if conf.meets(&derived) => Some(InstallationSetup {
+                flavor: conf.flavor,
+                translations_dir: Some(conf.translations),
+                languagetool_dir: Some(conf.languagetool),
+                java: conf.java,
+                autostart_record: conf.autostart,
+            }),
+            // One flavor on Windows; a missing recorded LanguageTool
+            // location means the payload moved or was re-extracted
+            // elsewhere — write the fresh derivation back and keep the
+            // autostart record.
+            Some(conf) if !conf.languagetool.is_dir() => {
+                let record = conf.autostart;
+                if writes {
+                    if let Some(conf) = derived.conf_from(record.clone()) {
+                        if let Err(e) = save(&config_root, &conf) {
+                            log::error!("failed to write back the moved install: {e:?}");
+                        }
+                    }
+                }
+                Some(InstallationSetup {
+                    autostart_record: record,
+                    ..derived
+                })
+            }
+            // A sibling copy lives where the file points (installer +
+            // portable coexisting): leave the file alone, serve this
+            // process from the derivation, no record leaks.
+            Some(_) => Some(derived),
+            // Nothing on disk yet: seed it.
+            None => {
+                if writes {
+                    if let Some(conf) = derived.conf_from(None) {
+                        if let Err(e) = save(&config_root, &conf) {
+                            log::error!("failed to seed the install configuration: {e:?}");
+                        }
+                    }
+                }
+                Some(derived)
+            }
+        }
+    }
 }
 
 /// Record (replace) the autostart Run-value line in the configuration.
@@ -85,20 +173,6 @@ pub fn record_autostart(line: &str) {
     }
 }
 
-/// Client entry point: resolve the install and keep the configuration on
-/// disk in sync with it (seed on first run, write back when the payload
-/// moved). Dev builds (`cargo run` / `cargo test`) resolve purely and
-/// never touch the file.
-pub fn ensure() -> Option<Resolved> {
-    resolve(true)
-}
-
-/// Daemon entry point: resolve read-only. Same resolution as [`ensure`],
-/// never writing the configuration file.
-pub fn read_only() -> Option<Resolved> {
-    resolve(false)
-}
-
 /// The payload root of this running copy — the directory holding
 /// `rhesis.exe`, `rhesis-service.exe`, `jre/`, `LanguageTool/` — for the
 /// in-binary uninstall. `None` in dev runs (nothing installed).
@@ -106,7 +180,13 @@ pub fn payload_root() -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         return None;
     }
-    super::process::exe_dir()
+    let exe_dir = super::process::exe_dir()?;
+    // The payload carries LanguageTool; a cargo build directory does not,
+    // and the wrong tree must not be deleted.
+    if !exe_dir.join("LanguageTool").is_dir() {
+        return None;
+    }
+    Some(exe_dir)
 }
 
 /// One file-level alias: `install.conf`'s location inside the app
@@ -118,15 +198,15 @@ pub fn path() -> Option<PathBuf> {
 /// Pure derivation of where a layout keeps everything, before any file is
 /// consulted.
 pub(crate) struct Derived {
-    pub flavor: Flavor,
+    pub flavor: InstallationFlavor,
     pub translations_dir: Option<PathBuf>,
     pub languagetool_dir: Option<PathBuf>,
     pub java: PathBuf,
 }
 
-impl From<Derived> for Resolved {
-    fn from(d: Derived) -> Resolved {
-        Resolved {
+impl From<Derived> for InstallationSetup {
+    fn from(d: Derived) -> InstallationSetup {
+        InstallationSetup {
             flavor: d.flavor,
             translations_dir: d.translations_dir,
             languagetool_dir: d.languagetool_dir,
@@ -139,7 +219,7 @@ impl From<Derived> for Resolved {
 /// One parsed configuration file.
 #[derive(Clone)]
 pub(crate) struct Conf {
-    pub flavor: Flavor,
+    pub flavor: InstallationFlavor,
     pub translations: PathBuf,
     pub languagetool: PathBuf,
     pub java: PathBuf,
@@ -148,11 +228,11 @@ pub(crate) struct Conf {
 
 impl Conf {
     /// Whether the file describes exactly this running copy.
-    fn meets(&self, derived: &Derived) -> bool {
-        self.flavor == derived.flavor
-            && Some(&self.translations) == derived.translations_dir.as_ref()
-            && Some(&self.languagetool) == derived.languagetool_dir.as_ref()
-            && self.java == derived.java
+    fn meets(&self, setup: &InstallationSetup) -> bool {
+        self.flavor == setup.flavor
+            && Some(&self.translations) == setup.translations_dir.as_ref()
+            && Some(&self.languagetool) == setup.languagetool_dir.as_ref()
+            && self.java == setup.java
     }
 }
 
@@ -174,7 +254,7 @@ pub(crate) fn parse(text: &str) -> Option<Conf> {
         let (key, value) = line.split_once('=')?;
         let value = value.trim();
         match key.trim() {
-            KEY_FLAVOR => flavor = Flavor::parse(value),
+            KEY_FLAVOR => flavor = InstallationFlavor::parse(value),
             KEY_TRANSLATIONS => translations = non_empty(value).map(PathBuf::from),
             KEY_LANGUAGETOOL => languagetool = non_empty(value).map(PathBuf::from),
             KEY_JAVA => java = non_empty(value).map(PathBuf::from),
@@ -211,7 +291,7 @@ pub(crate) fn serialize(conf: &Conf) -> String {
 /// so everything is a fixed join from it.
 pub(crate) fn derive_with(exe_dir: &Path) -> Derived {
     Derived {
-        flavor: Flavor::Windows,
+        flavor: InstallationFlavor::Windows,
         translations_dir: Some(exe_dir.join("translations")),
         languagetool_dir: Some(exe_dir.join("LanguageTool")),
         java: exe_dir.join("jre").join("bin").join("java.exe"),
@@ -232,86 +312,14 @@ fn save(config_root: &Path, conf: &Conf) -> Result<(), std::io::Error> {
     fs::write(conf_path(config_root), serialize(conf))
 }
 
-fn resolve(writes: bool) -> Option<Resolved> {
-    // Dev runs never touch an install configuration; their locations come
-    // from the working directory alone.
-    if cfg!(debug_assertions) {
-        return Some(dev_setup());
-    }
-
-    let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
-    let derived = derive(&exe_dir);
-
-    let Some(config_root) = paths::config_dir() else {
-        log::warn!("APPDATA is not set; resolving paths without persisting");
-        return Some(Resolved::from(derived));
-    };
-
-    match load(&config_root) {
-        // Exactly this copy: the read path, autostart record included.
-        Some(conf) if conf.meets(&derived) => Some(Resolved {
-            flavor: conf.flavor,
-            translations_dir: Some(conf.translations),
-            languagetool_dir: Some(conf.languagetool),
-            java: conf.java,
-            autostart_record: conf.autostart,
-        }),
-        // One flavor on Windows; a missing recorded LanguageTool location
-        // means the payload moved or was re-extracted elsewhere — write
-        // the fresh derivation back and keep the autostart record.
-        Some(conf) if !conf.languagetool.is_dir() => {
-            let record = conf.autostart;
-            if writes {
-                if let Some(conf) = derived_conf(&derived, record.clone()) {
-                    if let Err(e) = save(&config_root, &conf) {
-                        log::error!("failed to write back the moved install: {e:?}");
-                    }
-                }
-            }
-            Some(Resolved {
-                flavor: derived.flavor,
-                translations_dir: derived.translations_dir,
-                languagetool_dir: derived.languagetool_dir,
-                java: derived.java,
-                autostart_record: record,
-            })
-        }
-        // A sibling copy lives where the file points (installer + portable
-        // coexisting): leave the file alone, serve this process from the
-        // derivation, no record leaks.
-        Some(_) => Some(Resolved::from(derived)),
-        // Nothing on disk yet: seed it.
-        None => {
-            if writes {
-                if let Some(conf) = derived_conf(&derived, None) {
-                    if let Err(e) = save(&config_root, &conf) {
-                        log::error!("failed to seed the install configuration: {e:?}");
-                    }
-                }
-            }
-            Some(Resolved::from(derived))
-        }
-    }
-}
-
-fn derived_conf(derived: &Derived, autostart: Option<String>) -> Option<Conf> {
-    Some(Conf {
-        flavor: derived.flavor,
-        translations: derived.translations_dir.clone()?,
-        languagetool: derived.languagetool_dir.clone()?,
-        java: derived.java.clone(),
-        autostart,
-    })
-}
-
 /// Dev builds resolve from the working directory alone: translations from
 /// its `translations` folder (the build scripts compile the `.qm` catalogs
 /// next to the `.ts` sources); LanguageTool and java are left to the
 /// worker's own probing and `PATH`.
-fn dev_setup() -> Resolved {
+fn dev_setup() -> InstallationSetup {
     let cwd = std::env::current_dir().ok();
-    Resolved {
-        flavor: Flavor::Windows,
+    InstallationSetup {
+        flavor: InstallationFlavor::Windows,
         translations_dir: cwd.as_deref().and_then(dev_translations_dir),
         languagetool_dir: None,
         java: PathBuf::from("java"),
@@ -326,8 +334,8 @@ fn dev_translations_dir(dir: &Path) -> Option<PathBuf> {
 
 /// Derivation for the running process (no environment injection needed on
 /// Windows).
-fn derive(exe_dir: &Path) -> Derived {
-    derive_with(exe_dir)
+fn derive(exe_dir: &Path) -> InstallationSetup {
+    derive_with(exe_dir).into()
 }
 
 fn non_empty(value: &str) -> Option<String> {
@@ -342,14 +350,14 @@ fn non_empty(value: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn derived(root: &str) -> Derived {
-        derive_with(Path::new(root))
+    fn derived(root: &str) -> InstallationSetup {
+        derive_with(Path::new(root)).into()
     }
 
     #[test]
     fn conf_round_trips() {
         let conf = Conf {
-            flavor: Flavor::Windows,
+            flavor: InstallationFlavor::Windows,
             translations: PathBuf::from(r"C:\Rhesis\translations"),
             languagetool: PathBuf::from(r"C:\Rhesis\LanguageTool"),
             java: PathBuf::from(r"C:\Rhesis\jre\bin\java.exe"),
@@ -405,7 +413,7 @@ mod tests {
     fn meets_gate_separates_owned_moved_and_other_copy() {
         let derived = derived(r"C:\Rhesis");
         let ours = Conf {
-            flavor: Flavor::Windows,
+            flavor: InstallationFlavor::Windows,
             translations: derived.translations_dir.clone().unwrap(),
             languagetool: derived.languagetool_dir.clone().unwrap(),
             java: derived.java.clone(),

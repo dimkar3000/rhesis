@@ -245,7 +245,7 @@
     </message>
     <message>
         <source>background_tooltip</source>
-        <translation>Keep the embedded LanguageTool server running after closing the window, for other applications to use (http://127.0.0.1:%1/v2/check). Reopen Rhesis or quit from the tray icon.</translation>
+        <translation>Keep the embedded LanguageTool server running after closing the window.</translation>
     </message>
     <message>
         <source>autostart_switch_label</source>

@@ -190,7 +190,11 @@ pub fn payload_root() -> Option<PathBuf> {
     if cfg!(debug_assertions) {
         return None;
     }
-    super::process::exe_dir()?.parent().map(Path::to_path_buf)
+    let exe_dir = super::process::exe_dir()?;
+    if !exe_dir.ends_with("bin") {
+        return None;
+    }
+    exe_dir.parent().map(Path::to_path_buf)
 }
 
 /// One file-level alias: `install.conf`'s location inside the app

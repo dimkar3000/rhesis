@@ -167,10 +167,12 @@ fn exec_escape(path: &str) -> String {
 /// runtimes inject, in precedence order: `FLATPAK_ID` (the deep sandbox
 /// must be re-entered through `flatpak run` at login whatever filesystem
 /// the sandbox sees), `APPIMAGE` (the original image path, whose extracted
-/// mount point from `current_exe()` is wiped at exit), otherwise the
-/// running binary itself — the packaged tarball payload, which resolves all
-/// of its payload locations from `install.conf`. With no identity at all,
-/// the plain app id is the dev fallback.
+/// mount point from `current_exe()` is wiped at exit), `RHESIS_LAUNCHER`
+/// (the launcher script path exported by rhesis-installer.sh so autostart entries
+/// point at the launcher, not the raw binary — this lets uninstall clean up
+/// correctly), otherwise the running binary itself — the packaged tarball
+/// payload, which resolves all of its payload locations from `install.conf`.
+/// With no identity at all, the plain app id is the dev fallback.
 fn exec_command() -> String {
     if let Some(id) = std::env::var("FLATPAK_ID")
         .ok()
@@ -186,10 +188,59 @@ fn exec_command() -> String {
     {
         return exec_escape(path);
     }
+    if let Some(launcher) = std::env::var("RHESIS_LAUNCHER")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .as_deref()
+    {
+        return exec_escape(launcher);
+    }
     match std::env::current_exe().ok().as_deref() {
         Some(exe) if !exe.to_string_lossy().is_empty() => exec_escape(&exe.to_string_lossy()),
         _ => format!("{APP_ID} {HIDDEN_FLAG}"),
     }
+}
+
+fn appimage_icon_for_entry() -> String {
+    if let Some(_appimage) = std::env::var("APPIMAGE").ok().filter(|p| !p.is_empty()) {
+        // Extract icon from AppImage to user icon theme.
+        // current_exe() is /tmp/.mount_XXXXXX/app/bin/rhesis, so mount root is 3 levels up.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(mount_root) = exe
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+            {
+                // Try the symlink at the mount root first (linuxdeploy puts it there).
+                let icon_src = mount_root.join("io.github.dimkar3000.rhesis.png");
+                // Fallback: search common icon locations in the mounted AppImage.
+                let fallback_paths = [
+                    "usr/share/icons/hicolor/512x512/apps/io.github.dimkar3000.rhesis.png",
+                    "usr/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png",
+                    "usr/share/icons/hicolor/128x128/apps/io.github.dimkar3000.rhesis.png",
+                ];
+                let icon_src = if icon_src.exists() {
+                    icon_src
+                } else {
+                    fallback_paths
+                        .iter()
+                        .map(|p| mount_root.join(p))
+                        .find(|p| p.exists())
+                        .unwrap_or(icon_src)
+                };
+                if icon_src.exists() {
+                    if let Some(home) = std::env::var_os("HOME") {
+                        let icon_dir =
+                            PathBuf::from(home).join(".local/share/icons/hicolor/256x256/apps");
+                        let icon_dst = icon_dir.join("io.github.dimkar3000.rhesis.png");
+                        let _ = std::fs::create_dir_all(&icon_dir);
+                        let _ = std::fs::copy(&icon_src, &icon_dst);
+                    }
+                }
+            }
+        }
+    }
+    APP_ID.to_string()
 }
 
 fn entry_contents() -> String {
@@ -202,11 +253,12 @@ fn entry_contents() -> String {
          Type=Application\n\
          Name=Rhesis\n\
          Exec={}\n\
-         Icon={APP_ID}\n\
+         Icon={}\n\
          Terminal=false\n\
          StartupNotify=false\n\
          X-KDE-StartupNotify=false\n",
-        exec_command()
+        exec_command(),
+        appimage_icon_for_entry()
     )
 }
 
@@ -215,17 +267,19 @@ fn exec_line(contents: &str) -> Option<&str> {
     contents.lines().find_map(|line| line.strip_prefix("Exec="))
 }
 
+// Tests share one process, so every test that pins the autostart lookup
+// or the flavor identity vars takes this lock; the Sandbox restores the
+// previous values when dropped. Cross-module too — the uninstall tests
+// sandbox the same variables — hence pub(crate).
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
-    use std::sync::{Mutex, MutexGuard, PoisonError};
-
-    // Tests share one process, so every test that pins the autostart
-    // lookup or the flavor identity vars takes this lock; the Sandbox
-    // restores the previous values when dropped.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use std::sync::{MutexGuard, PoisonError};
 
     struct Sandbox {
         _lock: MutexGuard<'static, ()>,

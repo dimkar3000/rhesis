@@ -1,6 +1,6 @@
 [package]
 name = "rhesis"
-version = "0.6.0"
+version = "1.0.0"
 authors = ["dimkar <dimkar3000@gmail.com>"]
 edition = "2021"
 license = "MIT"
@@ -33,7 +33,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.6.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 
@@ -74,6 +74,9 @@ strip = true
 # Version info and icon for the Windows executable; the Windows shell (Task
 # manager's Startup list, Explorer, the taskbar) reads these from the exe.
 winresource = "0.1"
+
+# Needed to find the correct dependencies during link
+qt-build-utils = "0.9.1"
 
 # The boot E2E drives the real Qt boot and spawns the shipped client binary
 # (CARGO_BIN_EXE_rhesis), so it lives here rather than in the qt-client

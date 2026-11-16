@@ -245,7 +245,7 @@
     </message>
     <message>
         <source>background_tooltip</source>
-        <translation>Διατήρηση του ενσωματωμένου server LanguageTool σε λειτουργία μετά το κλείσιμο του παραθύρου, για χρήση από άλλες εφαρμογές (http://127.0.0.1:%1/v2/check). Άνοιγμα του Rhesis ή τερματισμός από το εικονίδιο συστήματος.</translation>
+        <translation>Διατήρηση του ενσωματωμένου server LanguageTool σε λειτουργία μετά το κλείσιμο του παραθύρου.</translation>
     </message>
     <message>
         <source>autostart_switch_label</source>

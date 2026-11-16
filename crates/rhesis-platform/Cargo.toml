@@ -9,5 +9,8 @@ license.workspace = true
 app-single-instance = "0.1.0"
 log.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }

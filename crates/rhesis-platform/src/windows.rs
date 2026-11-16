@@ -9,5 +9,6 @@ pub mod install;
 pub mod paths;
 pub mod process;
 pub mod resources;
+pub mod uninstall;
 
 mod job_object;

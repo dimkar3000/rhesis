@@ -26,7 +26,11 @@ RUST_BUILD_TYPE=release scripts/build-common.sh
 ```
 
 - Cargo target dir is `build/target` (not `target`) — set in `.cargo/config.toml` (gitignored; CI sets `CARGO_TARGET_DIR` explicitly)
-- Uses `mold` linker on Linux (same config file)
+- Uses `mold` linker on Linux (same config file). The build scripts also call
+  `qt_build_utils::QtPlatformLinker::init()`: cxx-qt's bundled initializers
+  don't link under GNU ld.bfd (single-pass archive resolution), so it emits
+  `-fuse-ld=lld|gold|mold` — no-ops when RUSTFLAGS already carries `-fuse-ld`
+  (the gitignored config) or on Windows
 - Dev run: `RUST_LOG=trace cargo run` for connection diagnostics; the spawned daemon logs to nowhere (detached stdio) — `RUST_LOG=trace ./build/target/debug/rhesis-service` watches it instead
 - Packaging builds both binaries: CMake's `rhesis_build` runs the scoped
   `cargo build -p rhesis --bin rhesis --bin rhesis-service`; the
@@ -81,6 +85,15 @@ cargo test --workspace --test qml-suites               # QML page suites
 cargo test --workspace --test ui-boot                  # real Root.qml boot
 ```
 
+The linux tiers never compile the `#[cfg(windows)]` branches, so they
+cannot catch breakage there — type-check the windows tree locally instead:
+`cargo check -p <crate> --target x86_64-pc-windows-msvc --all-targets`
+(`rustup target add` first; check needs no MSVC linker). Only works for
+crates whose dependency tree has no cross-compiling C build script:
+`rhesis-platform` is checkable; `rhesis-qt-client` (Qt discovery),
+`rhesis-languagetool` and anything depending on it, e.g.
+`rhesis-service` (aws-lc-sys cmake), are not.
+
 Layout:
 
 | Path | Contents |
@@ -103,7 +116,7 @@ Gates after every change:
 - `cargo fmt`
 - `cargo clippy --workspace --all-targets` — 0 warnings
 - `cargo test --workspace` — clean, no skips
-- shipped binaries' linkage: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`, and `ldd build/target/debug/rhesis-service` shows no Qt (enforced in CI's `build-linux.yml` test mode; the client's QuickTest gate stays a local check)
+- shipped binaries' linkage: `ldd build/target/debug/rhesis | grep -c QuickTest` = `0`, and `ldd build/target/debug/rhesis-service` shows no Qt (daemon gate enforced in CI's `test linux` job; the client's QuickTest gate stays a local check — the CI image's mold 2.40 marks `--as-needed` libs needed before `--gc-sections` discards their referencing code, so the never-called `run_suites` glue shows up there as a gratuitous `libQt6QuickTest` NEEDED)
 
 ### Headless rule
 
@@ -196,59 +209,81 @@ Qt `.ts` files in `translations/`, compiled to `.qm` at build time. `qt6_add_tra
 
 ## CI/CD
 
-Two files: `build-linux.yml` (the reusable Linux build) and `pipeline.yml`
-(the one flow that calls it and adds the release path).
+One file: `pipeline.yml`. The two test tiers are inline jobs with explicit
+`name:` fields — a reusable-workflow call aggregates both tiers behind one
+caller job, which would force each platform build to wait on the other tier.
 
-`build-linux.yml` — the Linux build step (`workflow_call`), in two modes:
+The two test jobs run in parallel on every ref, each banking its own
+platform cache:
 
-- `test` mode (the common job, runs on every ref): `cargo test --workspace
+- `test linux` (the kde-6.11 container): `cargo test --workspace
   --no-run` (every test target, the app and the QML runner, compiled once)
   plus `cargo clippy --workspace --all-targets`, so the lint pass's
-  check-mode artifacts are cached with the build; `release` mode (the
-  release payload): `scripts/build-common.sh` (app, fastText, language
-  model, LanguageTool, trimmed JRE)
-- Test mode carries the test tier as steps after the cache save, in the
-  same workspace: `cargo fmt --check`, the "Daemon binary links no Qt"
-  check (`ldd build/target/debug/rhesis-service` must show no Qt/QuickTest
-  — the headless rule above), and
+  check-mode artifacts are cached with the build. The tier itself runs
+  after the cache save, in the same workspace: `cargo fmt --all --check`
+  (`--workspace` predates the container's cargo), the "Daemon binary links
+  no Qt" check (`ldd build/target/debug/rhesis-service` must show no
+  Qt/QuickTest — the headless rule above), and
   `cargo test --workspace -- --skip qml_suites_pass`. The save sits before
   them so a red run still banks its compile; clippy stays before the save
   because its check-mode artifacts are a different compiler pipeline from
   the test binaries and must be cached there, or every run rechecks the
   whole dependency graph.
+- `test windows` (windows-latest, Qt 6.8.3 via install-qt-action): the
+  same tier minus the root package (`cargo test --workspace
+  --exclude rhesis` + clippy) — the E2E tiers in tests/e2e/ sandbox
+  through XDG homes and POSIX permissions (tests/e2e/common.rs), so they
+  stay Linux-only. No fmt/ldd gates here: fmt is platform-independent and
+  runs in the linux job, and the linkage checks are ldd-based. The cache
+  carries `target/` (the default target dir — no CARGO_TARGET_DIR
+  override on Windows).
+- Tracks are independent: `build linux` needs only `test linux`,
+  `build windows` needs only `test windows`, every packager waits on
+  its platform build, and `release` — needing all five packagers — is the
+  only place the tracks meet. A red tier stops exactly its own track
+  (its platform build and packagers skip) while the other proceeds.
 - Restores `rhesis-<os>-<profile>-<Cargo.lock hash>` (plus fallback prefixes)
   and saves under `<that key>-<run id>-<attempt>`: the save key must be unique
   per run, otherwise a stable key gets pinned to the first commit with that
   lockfile and the consumer would restore a build from older sources.
   Consumers restore the exact `cache-key` output, so nothing is rebuilt twice.
-- Cached paths: `~/.cargo/{registry,git}` plus `build/target` in test mode;
-  `build/cmake-build` (CMake passes `--target-dir` there, so that is where
-  the release Cargo tree lives), `build/artifacts`, fastText, LanguageTool
-  and the language model in release mode. A cache miss is safe: the scripts
-  rebuild. Consumers must list the same paths in the same order—
-  `actions/cache` hashes the path list into the cache version, so reordering
-  is a guaranteed miss even with the right key.
-- `.cargo/` is gitignored, so CI has no target-dir/linker config; test jobs
-  set `CARGO_TARGET_DIR=build/target` explicitly to match the cached path.
+- Cached paths: `~/.cargo/{registry,git}` plus `build/target` on linux and
+  `target` on windows. A cache miss is safe: the build re-runs. Consumers
+  must list the same paths in the same order—`actions/cache` hashes the
+  path list into the cache version, so reordering is a guaranteed miss
+  even with the right key.
+- `.cargo/` is gitignored, so CI has no target-dir/linker config; the
+  linux job sets `CARGO_TARGET_DIR=build/target` explicitly to match the
+  cached path.
 - CI sets `CARGO_INCREMENTAL=0` and disables debug info to keep the cache
-  small; every consuming job repeats that env, otherwise cargo fingerprints
-  change and the restored tree is rebuilt.
+  small; the test jobs inherit it from the workflow-level env (they are
+  inline), and the release-path jobs repeat it (otherwise cargo
+  fingerprints change and the restored tree is rebuilt).
 
 `pipeline.yml` — one flow for everything:
 
 - Triggers: every push (branches and tags), PRs into `main`/`develop`, and
   manual dispatch with a `package` input that runs the release path
   without a tag.
-- The common `linux` job (`build-linux.yml`, test mode) is the only thing
-  that runs on a feature branch. The release path — `build-linux` (release
-  mode), `build-windows` (`--stage-only`), the five packaging jobs and the
+- The test jobs are inline with explicit `name:` fields, so they display
+  as `test linux` and `test windows`; the inline `build-linux` job
+  is named `build linux`. Only the two test jobs run on a feature branch.
+  The release path — `build-linux` (needs only `test linux`; runs
+  `scripts/build-common.sh`; exports the release `cache-key` and
+  `profile: release`; release cache paths are `~/.cargo/{registry,git}`,
+  `build/cmake-build` (CMake passes `--target-dir` there, so that is
+  where the release Cargo tree lives), `build/artifacts`, fastText,
+  LanguageTool and the language model), `build-windows` (needs only
+  `test windows`; `--stage-only`), the five packaging jobs and the
   release — carries the gate
   `startsWith(github.ref, 'refs/tags/v') || (dispatch && inputs.package)`.
 - Version consistency (`scripts/check-versions.sh`) runs in the two build
   jobs, final releases only: `v*-*` tags are pre-releases and skip it (see
   Releasing).
-- Every packaging job needs the common job plus its platform build, so a
-  red test step blocks all final artifacts. One artifact per job:
+- Every packaging job needs its platform build — which waited on its own
+  tier — so a red tier blocks exactly that track's artifacts, and
+  `release` (needs all five packagers) is where the tracks meet. One
+  artifact per job:
   `flatpak` (container, `--privileged` for bubblewrap, `--no-runtimes` —
   the CI image preinstalls the runtimes), `appimage` (container,
   `APPIMAGE_EXTRACT_AND_RUN=1`, pre-installed linuxdeploy/appimagetool),
@@ -270,7 +305,7 @@ Two files: `build-linux.yml` (the reusable Linux build) and `pipeline.yml`
   The build job's cargo cache (`~/.cargo/{registry,git}` + `target/`)
   only benefits the next `build-windows` run; the target dir rides in it,
   so the LRU churn risk is accepted for the trade.
-- Release: tags only, downloads the five artifacts, adds `runner.sh` from
+- Release: tags only, downloads the five artifacts, adds `rhesis-installer.sh` from
   the checkout alongside the desktop tarballs for download-and-install,
   generates the body from `CHANGELOG.md` (`scripts/release-body.py`) and
   attaches everything.

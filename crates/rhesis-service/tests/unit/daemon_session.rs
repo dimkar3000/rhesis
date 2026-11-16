@@ -7,6 +7,7 @@ use std::{
 };
 
 use interprocess::local_socket::{traits::Stream as _, GenericNamespaced, Stream, ToNsName as _};
+use std::io::Read;
 
 use rhesis_constants::PROTOCOL;
 use rhesis_languagetool::service::CompletionProvider;
@@ -14,7 +15,7 @@ use rhesis_protocol::daemon_msg::DaemonMsg;
 use rhesis_protocol::frame_error::FrameError;
 use rhesis_protocol::recommendation::{Range, Recommendation};
 use rhesis_protocol::tier_socket_name;
-use rhesis_protocol::{read_frame, write_frame};
+use rhesis_protocol::write_frame;
 use rhesis_service::{
     daemon::DaemonOptions, session::ClientMsg,
     settings_diff_to_worker_events::settings_diff_to_worker_events,
@@ -213,6 +214,8 @@ impl DaemonPod {
 /// A connected client on the tier's socket.
 struct Client {
     stream: Stream,
+    /// Accumulated bytes from non-blocking reads, waiting for a complete frame.
+    pending: Vec<u8>,
 }
 
 /// Open a session the way the production client does: connect, then speak
@@ -229,20 +232,28 @@ fn open_session_with_retry(socket_name: &str) -> Client {
     let deadline = Instant::now() + DEADLINE;
     loop {
         let mut client = open_session(socket_name);
-        match client.read(SLICE) {
-            Some(DaemonMsg::Connect {
-                protocol: PROTOCOL,
-                busy: false,
-            }) => return client,
-            Some(DaemonMsg::Connect { busy: true, .. }) => client.expect_closed(),
-            // None: no handshake answer yet, keep polling.
-            None => {}
-            other => panic!("unexpected handshake answer {other:?}"),
+        // Poll this connection until we get a handshake response or deadline
+        loop {
+            match client.read(SLICE) {
+                Some(DaemonMsg::Connect {
+                    protocol: PROTOCOL,
+                    busy: false,
+                }) => {
+                    return client;
+                }
+                Some(DaemonMsg::Connect { busy: true, .. }) => {
+                    client.expect_closed();
+                    break; // Break inner loop to create new connection
+                }
+                // None: no handshake answer yet, keep polling THIS connection.
+                None => {}
+                other => panic!("unexpected handshake answer {other:?}"),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "never got a free session slot within the deadline"
+            );
         }
-        assert!(
-            Instant::now() < deadline,
-            "never got a free session slot within the deadline"
-        );
         std::thread::sleep(SLICE);
     }
 }
@@ -258,7 +269,13 @@ impl Client {
         let deadline = Instant::now() + DEADLINE;
         loop {
             match Stream::connect(name.clone()) {
-                Ok(stream) => return Client { stream },
+                Ok(stream) => {
+                    stream.set_nonblocking(true).expect("nonblocking set");
+                    return Client {
+                        stream,
+                        pending: Vec::new(),
+                    };
+                }
                 Err(e) => {
                     assert!(Instant::now() < deadline, "daemon never accepted: {e}");
                     std::thread::sleep(SLICE);
@@ -271,17 +288,68 @@ impl Client {
         write_frame(&mut self.stream, message).expect("client write");
     }
 
-    /// Reads with per-slice timeouts; returns `None` when nothing arrived
-    /// in the slice. A clean daemon close panics — callers awaiting a
-    /// close use [`Client::expect_closed`].
+    /// Reads with per-slice timeouts; returns `None` when no complete frame
+    /// arrived in the slice (partial frame data is retained for next call).
+    /// A clean daemon close returns `None` — callers awaiting a close use
+    /// [`Client::expect_closed`].
     fn read(&mut self, slice: Duration) -> Option<DaemonMsg> {
-        self.stream
-            .set_recv_timeout(Some(slice))
-            .expect("recv timeout set");
-        match read_frame::<DaemonMsg>(&mut self.stream) {
-            Ok(Some(message)) => Some(message),
-            Ok(None) => panic!("daemon closed the session unexpectedly"),
-            Err(FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => None,
+        // Drain whatever the non-blocking stream currently holds into pending.
+        let mut buf = [0u8; 4096];
+        let mut got_data = false;
+        loop {
+            match self.stream.read(&mut buf) {
+                Ok(0) => {
+                    // Stream closed cleanly (EOF).
+                    break;
+                }
+                Ok(n) => {
+                    self.pending.extend_from_slice(&buf[..n]);
+                    got_data = true;
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    break; // No more data available right now.
+                }
+                Err(e)
+                    if matches!(e.kind(), ErrorKind::ConnectionReset | ErrorKind::BrokenPipe) =>
+                {
+                    // Peer closed abruptly. If we got data, try to decode it.
+                    // If no data, treat as clean close.
+                    break;
+                }
+                Err(e) => panic!("client frame read failed: {e}"),
+            }
+        }
+
+        // Try to decode a frame from pending.
+        if self.pending.is_empty() {
+            if got_data {
+                // Got data but no complete frame - wait for more.
+                std::thread::sleep(slice);
+            } else {
+                // No data at all - sleep and retry.
+                std::thread::sleep(slice);
+            }
+            return None;
+        }
+
+        let mut cursor = std::io::Cursor::new(&self.pending[..]);
+        match rhesis_protocol::read_frame::<DaemonMsg>(&mut cursor) {
+            Ok(Some(msg)) => {
+                // Frame complete: remove consumed bytes from pending.
+                let consumed = cursor.position() as usize;
+                self.pending.drain(..consumed);
+                Some(msg)
+            }
+            Ok(None) => {
+                // Clean close at frame boundary.
+                self.pending.clear();
+                None
+            }
+            Err(FrameError::Truncated) => {
+                // Need more data - keep pending for next call.
+                std::thread::sleep(slice);
+                None
+            }
             Err(e) => panic!("client frame read failed: {e}"),
         }
     }
@@ -293,24 +361,60 @@ impl Client {
     fn expect_closed(&mut self) {
         let deadline = Instant::now() + DEADLINE;
         loop {
-            self.stream
-                .set_recv_timeout(Some(SLICE))
-                .expect("recv timeout set");
-            match read_frame::<DaemonMsg>(&mut self.stream) {
-                Ok(None) => return,
-                Err(FrameError::Io(e)) if e.kind() == ErrorKind::WouldBlock => {}
-                Err(FrameError::Io(e))
-                    if matches!(e.kind(), ErrorKind::ConnectionReset | ErrorKind::BrokenPipe) =>
-                {
-                    return;
+            // Drain available bytes.
+            let mut buf = [0u8; 4096];
+            let mut closed = false;
+            loop {
+                match self.stream.read(&mut buf) {
+                    Ok(0) => {
+                        closed = true;
+                        break;
+                    }
+                    Ok(n) => self.pending.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
+                        ) =>
+                    {
+                        return
+                    }
+                    Err(e) => panic!("frame read failed: {e}"),
                 }
-                Err(e) => panic!("frame read failed: {e}"),
-                other => panic!("expected a close, got {other:?}"),
             }
+
+            // Try to decode from pending.
+            if !self.pending.is_empty() {
+                let mut cursor = std::io::Cursor::new(&self.pending[..]);
+                match rhesis_protocol::read_frame::<DaemonMsg>(&mut cursor) {
+                    Ok(Some(frame)) => panic!("expected a close, got {frame:?}"),
+                    Ok(None) => return, // Clean close
+                    Err(FrameError::Truncated) => {
+                        // Partial frame - if stream closed, this is an error
+                        if closed {
+                            panic!("stream closed with partial frame");
+                        }
+                    }
+                    Err(FrameError::Io(e))
+                        if matches!(
+                            e.kind(),
+                            ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
+                        ) =>
+                    {
+                        return;
+                    }
+                    Err(e) => panic!("frame read failed: {e}"),
+                }
+            } else if closed {
+                return; // Clean close with no pending data
+            }
+
             assert!(
                 Instant::now() < deadline,
                 "the daemon never closed the refused session"
             );
+            std::thread::sleep(SLICE);
         }
     }
 

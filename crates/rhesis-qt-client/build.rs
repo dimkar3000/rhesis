@@ -1,6 +1,12 @@
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
+    // The crate's test binaries link cxx-qt crates, whose bundled
+    // initializers GNU ld.bfd cannot resolve (single-pass archive
+    // scanning); the linker choice is inert on Windows, where init()
+    // also no-ops.
+    qt_build_utils::QtPlatformLinker::init();
+
     let module = QmlModule::new("io.github.dimkar3000.rhesis");
 
     // The Windows UI lives in qml/windows/ and avoids Kirigami; the other

@@ -13,7 +13,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::{autostart, constants::APP_ID, install, paths, process};
+use super::{autostart, install, paths, process};
 
 /// Remove this copy (or fail with a user-facing message; development
 /// builds have nothing installed).
@@ -38,7 +38,7 @@ pub fn uninstall() -> Result<String, String> {
 
     // Remove Start Menu shortcuts the installer may have written.
     let mut desktop_removed = false;
-    for path in apps_desktop_files(&install::Flavor::Windows) {
+    for path in apps_desktop_files(&install::InstallationFlavor::Windows) {
         match fs::remove_file(&path) {
             Ok(()) => desktop_removed = true,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -98,13 +98,13 @@ fn schedule_payload_removal(root: &Path) -> Result<(), String> {
     }
 }
 
-/// The Start Menu shortcut locations the installer can have written,
+/// The Start Menu shortcut locations the install can have registered,
 /// based on the install flavor.
-fn apps_desktop_files(flavor: &install::Flavor) -> Vec<PathBuf> {
-    let entry = format!("{APP_ID}.desktop");
+fn apps_desktop_files(flavor: &install::InstallationFlavor) -> Vec<PathBuf> {
+    let entry = String::from("Rhesis.lnk");
     let mut paths = Vec::new();
     match flavor {
-        install::Flavor::Windows => {
+        install::InstallationFlavor::Windows => {
             if let Some(appdata) = env::var_os("APPDATA") {
                 paths.push(
                     PathBuf::from(appdata)

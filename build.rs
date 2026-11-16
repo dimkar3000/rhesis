@@ -1,4 +1,7 @@
 fn main() {
+    // Needed for windows so the correct dependencies are set for QT
+    qt_build_utils::QtPlatformLinker::init();
+
     // Shell-visible identity lives in the exe itself: embed version info and
     // the icon so Task manager's Startup list shows "Rhesis" with logo and
     // publisher instead of the bare file name with the generic one.

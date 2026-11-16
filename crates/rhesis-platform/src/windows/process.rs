@@ -30,6 +30,10 @@ pub fn kill_child_on_exit(child: &std::process::Child) -> Result<(), String> {
     super::job_object::kill_child_on_exit(child)
 }
 
+/// Pre-spawn custody: no-op here — the job object needs the spawned handle,
+/// so Windows ties the child in post-spawn via [`kill_child_on_exit`].
+pub fn kill_child_on_parent_exit(_command: &mut std::process::Command) {}
+
 /// Spawn the given program (with `args`) detached from this process's
 /// fate: it survives the UI exiting (the daemon must outlive its client);
 /// console suppression applies and stdio is discarded — the daemon logs

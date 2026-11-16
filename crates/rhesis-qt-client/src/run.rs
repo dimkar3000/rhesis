@@ -16,6 +16,7 @@ use rhesis_platform::constants::{APP_ID, HIDDEN_FLAG};
 use rhesis_platform::install::InstallationSetup;
 use rhesis_platform::resources::translations_dir;
 use rhesis_platform::single_instance;
+use rhesis_platform::uninstall;
 
 lazy_static! {
     static ref NAMESPACE: QString = QString::from(APP_ID);
@@ -33,6 +34,28 @@ lazy_static! {
 /// ends.
 pub fn run() {
     env_logger::init();
+
+    // `--uninstall`: remove this install before anything boots — no window,
+    // no single-instance acquisition, no daemon spawn. A live instance
+    // rewrites state after the removal (an open settings page re-commits
+    // the autostart entry on Apply) and this path has no process-kill, so
+    // it refuses while one is running; the probe also asks it to show.
+    if env::args().any(|arg| arg == "--uninstall") {
+        if single_instance::ping_primary() {
+            eprintln!("another Rhesis instance is running; quit it before uninstalling");
+            std::process::exit(1);
+        }
+        match uninstall::uninstall() {
+            Ok(message) => {
+                println!("{message}");
+                std::process::exit(0);
+            }
+            Err(message) => {
+                eprintln!("Rhesis uninstall failed: {message}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     let mut app = QApplication::new();
     if let Some(mut app) = app.as_mut() {
