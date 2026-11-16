@@ -21,7 +21,15 @@ LANGUAGETOOL_VERSION="${LANGUAGETOOL_VERSION:-Latest}"
 LANGUAGETOOL_URL="${LANGUAGETOOL_URL:-https://internal1.languagetool.org/snapshots/LanguageTool-latest-snapshot.zip}"
 LANGUAGETOOL_DIR="$BUILD_DIR/LanguageTool"
 
+# --- Download integrity (override via environment) ---
+# Expected SHA-256 checksums for downloaded artifacts. Override via
+# environment when a release rotates to a new build. Mismatch aborts
+# before anything is extracted or installed.
+LANGUAGETOOL_SHA256="${LANGUAGETOOL_SHA256:-53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631}"
+LID_MODEL_SHA256="${LID_MODEL_SHA256:-8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83}"
+
 FASTTEXT_REPO="${FASTTEXT_REPO:-https://github.com/facebookresearch/fastText.git}"
+FASTTEXT_COMMIT="${FASTTEXT_COMMIT:-5b5943c118b0ec5fb9cd8d20587de2b2d3966dfe}"
 FASTTEXT_DIR="$BUILD_DIR/fastText"
 
 LID_MODEL_URL="${LID_MODEL_URL:-https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz}"
@@ -102,6 +110,13 @@ download_languagetool() {
     else
         wget -qO "$archive" "$LANGUAGETOOL_URL"
     fi
+    # Verify LanguageTool checksum before extracting.
+    echo "$LANGUAGETOOL_SHA256  $archive" | sha256sum -c - || {
+        echo "ERROR: LanguageTool archive checksum mismatch; refusing to extract" >&2
+        rm -f "$archive"
+        rm -rf "$tmpdir"
+        exit 1
+    }
 
     info "Extracting LanguageTool..."
     unzip -qo "$archive" -d "$tmpdir"
@@ -131,8 +146,8 @@ setup_fasttext() {
         return
     fi
 
-    info "Cloning fastText repository..."
-    git clone --depth 1 "$FASTTEXT_REPO" "$FASTTEXT_DIR"
+    info "Cloning fastText repository (commit $FASTTEXT_COMMIT)..."
+    git clone --depth 1 --branch "$FASTTEXT_COMMIT" "$FASTTEXT_REPO" "$FASTTEXT_DIR"
 
     info "Building fastText..."
     make -C "$FASTTEXT_DIR" -j"$(nproc)"
@@ -149,6 +164,12 @@ download_lid_model() {
     info "Downloading language identification model (lid.176.ftz)..."
 
     curl -fsSLo "$LID_MODEL_FILE" "$LID_MODEL_URL"
+    # Verify lid model checksum before installing.
+    echo "$LID_MODEL_SHA256  $LID_MODEL_FILE" | sha256sum -c - || {
+        echo "ERROR: lid.176.ftz checksum mismatch; refusing to install" >&2
+        rm -f "$LID_MODEL_FILE"
+        exit 1
+    }
 
     info "lid.176.ftz downloaded (size: $(du -h "$LID_MODEL_FILE" | cut -f1))."
 }

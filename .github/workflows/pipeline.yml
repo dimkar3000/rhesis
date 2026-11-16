@@ -1,25 +1,13 @@
 name: Pipeline
 
-# One flow for everything. The common Linux job (build + the test tier)
-# runs on every push, every PR and every dispatch; the release path — the
-# Windows staged payload, the five per-flavor packaging jobs and the GitHub
-# release — only runs on version tag pushes, or on a dispatch that asks for
-# it, so a feature branch pays exactly the common job and nothing more.
-# Every packaging job needs the common job: no final artifact is generated
-# before the tests are green.
+# We have the same flow for everything for both windows and linux. 
+#    Test -> Build -> Bundle -> Release
 on:
   push:
   pull_request:
     branches:
       - main
       - develop
-  workflow_dispatch:
-    inputs:
-      package:
-        description: "Also run the release path (packages all flavors; uploads to a release only on version tags)"
-        required: false
-        type: boolean
-        default: false
 
 # A newer push supersedes an in-flight run on the same ref.
 concurrency:
@@ -38,28 +26,282 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
 
-# The release path runs for version tags, and for a dispatch that asks for
-# packaging. The condition is repeated on every release-path job below.
+# The release path runs for version tags only. Pushes and PRs never build
+# packages; packaging is gated to `refs/tags/v*` on every release-path job.
 jobs:
-  # ── Common build + tests — every ref ─────────────────────────────────
+  # ── Test tiers — every ref, in parallel ─────────────────────────────
+  # Two independent jobs, inline (not a reusable-workflow call): a call
+  # would aggregate both tiers behind one caller job, forcing each
+  # platform build to wait on the other tier. Inline, each job displays
+  # exactly `test linux` / `test windows`, banks its own platform
+  # cache, and gates only its own track.
   linux:
-    uses: ./.github/workflows/build-linux.yml
-    with:
-      mode: test
+    name: "[Linux] Test"
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    env:
+      # Never mutate translation sources in clean-room builds (the
+      # container's lupdate lacks QML support and would empty them).
+      SKIP_LUPDATE: 1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Allow git in container workspace
+        # The KDE SDK container runs as a different UID than the checkout
+        # owner, so git refuses to work ("dubious ownership") unless told
+        # the workspace is safe.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache key
+        id: cache-key
+        run: |
+          # Cargo.lock pins the dependency graph, so the restore key is
+          # stable across source commits: cargo rebuilds only the crates
+          # that changed. The save key adds the run id so the cache is
+          # never pinned to the first commit with that lockfile.
+          base="rhesis-${{ runner.os }}-debug-${{ hashFiles('Cargo.lock') }}"
+          echo "restore-key=$base" >> "$GITHUB_OUTPUT"
+          echo "save-key=$base-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          # Same paths, same order as the save step below: actions/cache
+          # hashes the path list into the cache version, so a reordering
+          # turns every restore into a miss.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/target
+          key: ${{ steps.cache-key.outputs.restore-key }}
+
+      - name: Build test binaries
+        env:
+          # `.cargo/config.toml` is gitignored, so a clean CI checkout has
+          # no target-dir override: name it here to match the cached path.
+          CARGO_TARGET_DIR: build/target
+        # Workspace-wide: the member crates carry the LanguageTool and
+        # platform test tiers; only the root package alone would skip them.
+        run: cargo test --workspace --no-run
+
+      # Clippy compiles in check mode, which produces metadata artifacts
+      # that test code generation cannot reuse. Running it here (before the
+      # save) puts those artifacts in the same cache as the binaries, so
+      # later runs only re-check the workspace crate instead of every
+      # dependency.
+      - name: Workspace lint
+        env:
+          CARGO_TARGET_DIR: build/target
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Always save: the next run must not rebuild what this run compiled,
+      # even when a later step goes red.
+      - name: Save build cache
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/target
+          key: ${{ steps.cache-key.outputs.save-key }}
+
+      - name: Formatting
+        # `--all`, not `--workspace`: the container's cargo (flatpak SDK
+        # rust-stable 24.08) predates the --workspace alias. Same coverage —
+        # every workspace package, from the root.
+        run: cargo fmt --all --check
+
+      - name: Daemon binary links no Qt (headless check)
+        # The daemon bin lives in the Qt workspace (`src/rhesis-server.rs`,
+        # root package) and stays Qt-free only while it never references
+        # the `rhesis-qt-client` crate: any use — even a plain const —
+        # pulls the bridge's #[link] registrations in, and libQt6* lands
+        # in NEEDED (invisible on the rustc command line). This ldd gate
+        # is the only thing that catches it. The client binary's QuickTest
+        # link gate stays local (AGENTS.md).
+        env:
+          CARGO_TARGET_DIR: build/target
+        run: |
+          binary=build/target/debug/rhesis-service
+          if ! [ -x "$binary" ]; then
+            echo "ERROR: $binary not built; the shared build must produce it" >&2
+            exit 1
+          fi
+          if ldd "$binary" | grep -iE 'qt[0-9]|quicktest'; then
+            echo "ERROR: rhesis-service links Qt (see above); the daemon must stay headless" >&2
+            exit 1
+          fi
+
+      - name: Tests
+        # `qml_suites_pass` is the only test in the QML page-suite target.
+        # That tier renders screenshots for manual inspection, which is a
+        # local-development tool; CI runs every assertion tier but does
+        # not generate images. Run it locally with:
+        #   cargo test --test qml-suites
+        env:
+          CARGO_TARGET_DIR: build/target
+          QT_QPA_PLATFORM: offscreen
+        run: cargo test --workspace -- --skip qml_suites_pass
+
+  windows:
+    name: "[Windows] Test"
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Git Bash ships with the runner; the tier itself is plain cargo.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          # Same version and arch the shipped Windows build uses; the
+          # action's cache is shared with that job's install.
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Cache key
+        id: cache-key
+        run: |
+          # Same scheme as the linux job.
+          base="rhesis-${{ runner.os }}-debug-${{ hashFiles('Cargo.lock') }}"
+          echo "restore-key=$base" >> "$GITHUB_OUTPUT"
+          echo "save-key=$base-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          # The default target dir on Windows (`target/`, no
+          # CARGO_TARGET_DIR override), so the cache carries it directly.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cache-key.outputs.restore-key }}
+
+      - name: Build test binaries
+        # `--exclude rhesis`: the root package's E2E tiers sandbox through
+        # XDG homes and POSIX permissions (tests/e2e/common.rs) and stay
+        # Linux-only; every member crate still compiles, including the
+        # Windows QML set of the UI library.
+        run: cargo test --workspace --exclude rhesis --no-run
+
+      - name: Workspace lint
+        # Clippy type-checks the #[cfg(windows)] code the Linux job never
+        # sees.
+        run: cargo clippy --workspace --exclude rhesis --all-targets -- -D warnings
+
+      - name: Save build cache
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cache-key.outputs.save-key }}
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: cargo test --workspace --exclude rhesis
 
   # ── Release path ─────────────────────────────────────────────────────
-  # Both platform builds wait for the common job: on a tag, a red test
-  # step stops the release before a single artifact binary is built.
+  # Each platform build waits only on its own test tier: on a tag, a red
+  # linux tier stops the linux flavors before a single artifact binary is
+  # built, while the windows track proceeds independently. The tracks
+  # meet again only at `release`.
   build-linux:
+    name: "[Linux] Build"
     needs: [linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
-    uses: ./.github/workflows/build-linux.yml
-    with:
-      mode: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
+    env:
+      SKIP_LUPDATE: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    outputs:
+      cache-key: ${{ steps.cache-key.outputs.save-key }}
+      profile: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history + tags: build-common.sh regenerates metainfo dates
+          # from historic release tags.
+          fetch-depth: 0
+
+      - name: Allow git in container workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check version consistency (final releases only)
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        run: ./scripts/check-versions.sh
+
+      - name: Cache key
+        id: cache-key
+        run: |
+          # Cargo.lock pins the dependency graph, so the restore key is
+          # stable across source commits: cargo rebuilds only the crates
+          # that changed. The save key adds the run id, because the
+          # consuming job must restore the tree THIS run produced — a
+          # stable save key would pin the cache to the first commit with
+          # that lockfile and hand the packaging job an app built from
+          # older sources.
+          base="rhesis-${{ runner.os }}-release-${{ hashFiles('Cargo.lock') }}"
+          echo "restore-key=$base" >> "$GITHUB_OUTPUT"
+          echo "save-key=$base-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          # Same paths, same order as the save step below and as the
+          # packagers' restores: actions/cache hashes the path list into
+          # the cache version, so a reordering turns every restore into a
+          # miss even with the right key.
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ steps.cache-key.outputs.restore-key }}
+
+      - name: Build release artifacts
+        env:
+          # scripts/build-common.sh builds through CMake, which passes
+          # --target-dir build/cmake-build, so the release Cargo tree
+          # lives there, not in build/target.
+          RUST_BUILD_TYPE: release
+        run: ./scripts/build-common.sh --verbose --no-spinner
+
+      # Always save: the consumer must get this run's tree, not the older
+      # entry the restore step reused for speed.
+      - name: Save build cache
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/cmake-build
+            build/artifacts
+            build/fasttext-src
+            build/LanguageTool-6.6.zip
+            build/lid.176.ftz
+          key: ${{ steps.cache-key.outputs.save-key }}
 
   build-windows:
-    needs: [linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Windows] Build"
+    needs: [windows]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     defaults:
       run:
@@ -68,7 +310,7 @@ jobs:
     outputs:
       payload-cache-key: ${{ steps.windows-cache-key.outputs.payload-save-key }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check version consistency (final releases only)
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
@@ -84,7 +326,7 @@ jobs:
           cache: true
 
       - name: Install JDK (for the trimmed JRE)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -105,7 +347,7 @@ jobs:
           echo "payload-save-key=rhesis-${{ runner.os }}-payload-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore windows cargo cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           # Same paths, same order as the save step below.
           path: |
@@ -113,9 +355,6 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ steps.windows-cache-key.outputs.cargo-restore-key }}
-          restore-keys: |
-            ${{ steps.windows-cache-key.outputs.cargo-restore-key }}-
-            rhesis-${{ runner.os }}-release-
 
       - name: Build and stage the Windows payload
         env:
@@ -123,7 +362,7 @@ jobs:
         run: ./scripts/build-windows.sh --stage-only --verbose --no-spinner
 
       - name: Save windows cargo cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ~/.cargo/registry
@@ -132,7 +371,7 @@ jobs:
           key: ${{ steps.windows-cache-key.outputs.cargo-save-key }}
 
       - name: Save windows payload cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           # Same paths, same order as the two packaging restores below: the
           # path list is hashed into the cache version, so any reordering
@@ -147,8 +386,9 @@ jobs:
   # build-linux cached and re-run build-common.sh incrementally inside
   # their script; the Windows flavors restore the staged payload.
   flatpak:
-    needs: [linux, build-linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Bundle] Flatpak"
+    needs: [build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
@@ -164,7 +404,7 @@ jobs:
       # match it.
       RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history + tags: the packaging script re-runs
           # build-common.sh, whose metainfo regen resolves historic release
@@ -178,9 +418,10 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Restore build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
-          # Same paths, same order as the release save in build-linux.yml:
+          # Same paths, same order as the release save in the build-linux
+          # job above:
           # actions/cache hashes the path list into the cache version, so a
           # reordering turns every restore into a miss.
           path: |
@@ -198,14 +439,15 @@ jobs:
         run: ./scripts/build-flatpak.sh --no-runtimes --verbose --no-spinner
 
       - name: Upload Flatpak artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flatpak
           path: build/artifacts/flatpak/*.flatpak
 
   appimage:
-    needs: [linux, build-linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Bundle] AppImage"
+    needs: [build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
@@ -216,7 +458,7 @@ jobs:
       SKIP_LUPDATE: 1
       RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -224,7 +466,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Restore build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry
@@ -245,14 +487,15 @@ jobs:
             --appimagetool /opt/appimage-tools/appimagetool-x86_64.AppImage
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: build/artifacts/appimage/*.AppImage
 
   desktop:
-    needs: [linux, build-linux]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Bundle] Desktop"
+    needs: [build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/rhesis-ci:kde-6.11
@@ -260,7 +503,7 @@ jobs:
       SKIP_LUPDATE: 1
       RUST_BUILD_TYPE: ${{ needs.build-linux.outputs.profile }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -268,7 +511,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Restore build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry
@@ -287,23 +530,24 @@ jobs:
         run: ./scripts/build-desktop.sh --local --verbose --no-spinner
 
       - name: Upload desktop artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop
           path: build/artifacts/desktop/*.tar.gz
 
   windows-zip:
-    needs: [linux, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Bundle] Windows zip"
+    needs: [build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Restore windows payload cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           # Exact key only: a prefix fallback could restore a payload built
           # from another commit and package it. Same paths, same order as
@@ -317,26 +561,27 @@ jobs:
         run: ./scripts/build-windows.sh --zip-only --verbose --no-spinner
 
       - name: Upload Windows zip artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-zip
           path: build/artifacts/windows/*.zip
 
   windows-installer:
-    needs: [linux, build-windows]
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.package == true)
+    name: "[Bundle] Windows installer"
+    needs: [build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version 6.3.0 --no-progress -y
 
       - name: Restore windows payload cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             build/windows-stage
@@ -347,12 +592,13 @@ jobs:
         run: ./scripts/build-windows.sh --installer-only --verbose --no-spinner
 
       - name: Upload Windows installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: build/artifacts/windows/*-setup.exe
 
   release:
+    name: "[Release] All platforms"
     needs: [flatpak, appimage, desktop, windows-zip, windows-installer]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -360,10 +606,10 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
@@ -375,20 +621,46 @@ jobs:
           cp artifacts/desktop/*.tar.gz release/
           cp artifacts/windows-zip/*.zip release/
           cp artifacts/windows-installer/*-setup.exe release/
-          chmod +x scripts/runner.sh
-          cp scripts/runner.sh release/runner.sh
+          chmod +x scripts/rhesis-installer.sh
+          cp scripts/rhesis-installer.sh release/rhesis-installer.sh
           ls -lh release/
 
       - name: Generate release body from CHANGELOG
-        if: ${{ !contains(github.ref_name, 'test') }}
-        run: python3 scripts/release-body.py CHANGELOG.md "${{ github.ref_name }}" > release_body.md
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          # Pass the ref via env, not shell interpolation: a tag name is
+          # attacker-controlled (anyone with write access can create one),
+          # and `${{ github.ref_name }}` inside a shell `run:` string lets
+          # `$()` / backticks / quote-breaking escape into command execution.
+          REF_NAME: ${{ github.ref_name }}
+        run: python3 scripts/release-body.py CHANGELOG.md "$REF_NAME" > release_body.md
 
-      - name: Placeholder body for test releases
-        if: ${{ contains(github.ref_name, 'test') }}
-        run: echo "Test build ${{ github.ref_name }}" > release_body.md
+      - name: Generate release body for pre-release (fallback to base version)
+        if: ${{ contains(github.ref_name, '-') }}
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          BASE_VER="${REF_NAME%%-*}"
+          python3 scripts/release-body.py CHANGELOG.md "$BASE_VER" > release_body.md || echo "Pre-release build" > release_body.md
+
+      - name: Compute artifact SHA-256 checksums
+        run: |
+          # Append SHA-256 checksums of every release artifact so downloaders
+          # can verify integrity. Written after the CHANGELOG body so it is
+          # not overwritten.
+          {
+            echo ""
+            echo "## SHA-256 checksums"
+            echo ""
+            for f in release/*; do
+              [ -f "$f" ] || continue
+              printf '%s: `%s`\n' "$(basename "$f")" "$(sha256sum "$f" | awk '{print $1}')"
+            done
+          } >> release_body.md
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
           body_path: release_body.md
+          prerelease: ${{ contains(github.ref_name, '-') }}

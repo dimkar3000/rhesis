@@ -6,7 +6,12 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 BUILD_DIR="$PROJECT_DIR/build"
 ARTIFACTS_DIR="$BUILD_DIR/artifacts"
-VERSION=$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+VERSION=$(grep -m1 '^version' "$PROJECT_DIR/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
+# Pre-release tags embed the pre-release version in artifact names
+# transiently (same rule as scripts/generate-metainfo.py).
+case "${GITHUB_REF_NAME:-}" in
+    v*-*) VERSION="${GITHUB_REF_NAME#v}" ;;
+esac
 
 # --- Parse arguments ---
 LOCAL_INSTALL=false
@@ -88,7 +93,7 @@ install_desktop_files() {
 install_launcher() {
     local path="$1"
     mkdir -p "$(dirname "$path")"
-    cp "$SCRIPT_DIR/runner.sh" "$path"
+    cp "$SCRIPT_DIR/rhesis-installer.sh" "$path"
     chmod +x "$path"
 }
 
@@ -124,10 +129,10 @@ main() {
     echo ""
     if [ "$LOCAL_INSTALL" = true ]; then
         echo "Per-user tarball created: $output_dir/$output_name"
-        echo "Install with: RHESIS_ARCHIVE_SRC=$output_dir scripts/runner.sh --install local"
+        echo "Install with: RHESIS_ARCHIVE_SRC=$output_dir scripts/rhesis-installer.sh --install local"
     else
         echo "Global tarball created: $output_dir/$output_name"
-        echo "Install with: sudo RHESIS_ARCHIVE_SRC=$output_dir scripts/runner.sh --install"
+        echo "Install with: sudo RHESIS_ARCHIVE_SRC=$output_dir scripts/rhesis-installer.sh --install"
     fi
 }
 
@@ -136,6 +141,11 @@ assemble_global() {
 
     install_payload "$staging/usr/share/rhesis"
     install_desktop_files "$staging/usr/share/rhesis"
+    # Also install the icon in the system icon theme directory so autostart entries
+    # (which reference the icon by name) can find it.
+    mkdir -p "$staging/usr/share/icons/hicolor/256x256/apps"
+    cp "$ARTIFACTS_DIR/app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png" \
+        "$staging/usr/share/icons/hicolor/256x256/apps/"
     install_launcher "$staging/usr/bin/rhesis"
 }
 
@@ -144,6 +154,11 @@ assemble_local() {
 
     install_payload "$staging/.local/share/rhesis"
     install_desktop_files "$staging/.local/share/rhesis"
+    # Also install the icon in the icon theme directory so autostart entries
+    # (which reference the icon by name) can find it.
+    mkdir -p "$staging/.local/share/icons/hicolor/256x256/apps"
+    cp "$ARTIFACTS_DIR/app/share/icons/hicolor/256x256/apps/io.github.dimkar3000.rhesis.png" \
+        "$staging/.local/share/icons/hicolor/256x256/apps/"
     install_launcher "$staging/.local/bin/rhesis"
 }
 

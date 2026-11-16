@@ -43,25 +43,25 @@ chmod +x rhesis-<version>-x86_64.AppImage
 ./rhesis-<version>-x86_64.AppImage
 ```
 
-### Option 3: Native install (desktop tarball + runner.sh)
+### Option 3: Native install (desktop tarball + rhesis-installer.sh)
 
 Installs a launcher, desktop entry, both binaries (client + daemon), a
 bundled JRE and LanguageTool to `/usr` (global) or `~/.local` (per-user).
-`runner.sh` automatically downloads the
+`rhesis-installer.sh` automatically downloads the
 matching tarball from the latest release; if you placed a
 `rhesis-<version>-x86_64[-local].tar.gz` in the current directory, it is
 used instead.
 
 ```sh
 # download the installer
-wget https://github.com/dimkar3000/rhesis/releases/latest/download/runner.sh
-chmod +x runner.sh
+wget https://github.com/dimkar3000/rhesis/releases/latest/download/rhesis-installer.sh
+chmod +x rhesis-installer.sh
 
 # system-wide install (writes to /, requires root)
-sudo ./runner.sh --install
+sudo ./rhesis-installer.sh --install
 
 # or per-user install (no root required)
-./runner.sh --install local
+./rhesis-installer.sh --install local
 ```
 
 Uninstall with `sudo rhesis --uninstall` for global installations or `rhesis --uninstall`
@@ -183,14 +183,15 @@ at build time via the manifest.  The resulting bundle is exported to
 
 One workflow, `.github/workflows/pipeline.yml`, drives everything:
 
-- Every push, PR and manual dispatch runs the common Linux job: the app
-  and test binaries are built once, cached, then the test tier runs in
-  the same workspace (`cargo fmt`, the daemon's headless-linkage gate,
-  `cargo test --workspace`).
-- The release path — the Windows payload build, per-flavor packaging and
-  the GitHub release — only runs on version tags (`v*`), or on a manual
-  dispatch that asks for it. Every packaging job waits on the common job,
-  so no artifact is generated before the tests are green.
+- Every push, PR and manual dispatch runs two parallel test jobs —
+  `test linux` and `test windows` (the same tier minus the
+  Linux-only E2E sandboxes on Windows) — each banking its own platform
+  cache.
+- Each platform track then proceeds independently: `build linux` → the
+  three Linux packaging jobs, `build windows` → the two Windows packaging
+  jobs; the tracks meet again only at the GitHub release. The release
+  path only runs on version tags (`v*`), or on a manual dispatch that
+  asks for it, and no packaging job runs before its own tier is green.
 - Version consistency (`Cargo.toml`/`CHANGELOG.md` vs tag) is checked in
   the build jobs for final releases only, via
   `scripts/check-versions.sh`; `v*-*` tags are pre-releases, which skip

@@ -19,12 +19,34 @@ LANGUAGETOOL_ZIP_DIR="LanguageTool-6.6"
 VCREDIST_URL="https://aka.ms/vs/17/release/vc_redist.x64.exe"
 VCREDIST_DIR="$BUILD_DIR/redist"
 
+# --- Download integrity (override via environment) ---
+# Expected SHA-256 for the LanguageTool archive. Override via environment
+# when a release rotates to a new build. Mismatch aborts before anything
+# is extracted or bundled.
+LANGUAGETOOL_SHA256="${LANGUAGETOOL_SHA256:-53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631}"
+
+# Verify a downloaded file against its expected SHA-256. Aborts on
+# mismatch so a tampered archive is never extracted or shipped.
+verify_sha256() {
+    local file="$1" expected="$2" label="$3"
+    echo "$expected  $file" | sha256sum -c - >/dev/null || {
+        echo "ERROR: $label ($file) SHA-256 mismatch; refusing to continue" >&2
+        return 1
+    }
+}
+
 # Pre-release tags embed the pre-release version in artifact names
 # transiently (same rule as scripts/generate-metainfo.py).
 VERSION=$(grep -m1 '^version' "$PROJECT_DIR/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')
-NUMERIC_VERSION="$VERSION"
+# Numeric form for the installer's VersionInfoVersion: strip prerelease tag.
+NUMERIC_VERSION=$(echo "$VERSION" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$/\1.\2.\3/')
 case "${GITHUB_REF_NAME:-}" in
-    v*-*) VERSION="${GITHUB_REF_NAME#v}" ;;
+    v*-*)
+        VERSION="${GITHUB_REF_NAME#v}"
+        # A prerelease tag like v0.7.0-rc.2 becomes numeric 0.7.0.2 so Inno
+        # Setup accepts it as a file version.
+        NUMERIC_VERSION=$(echo "$VERSION" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$/\1.\2.\3.\4/')
+        ;;
 esac
 
 # --- Parse arguments ---
@@ -187,6 +209,7 @@ setup_languagetool() {
     if [ ! -f "$archive" ]; then
         mkdir -p "$BUILD_DIR"
         curl -fsSLo "$archive" "$LANGUAGETOOL_ZIP_URL"
+        verify_sha256 "$archive" "$LANGUAGETOOL_SHA256" "LanguageTool archive"
     fi
 
     rm -rf "$lt_dir" "$ARTIFACTS_DIR/lt-extract"
@@ -282,6 +305,10 @@ build_zip() {
 }
 
 # --- Fetch the official runtime installer for the chained install ---
+# NOTE: $VCREDIST_URL (aka.ms/vs/17/release/vc_redist.x64.exe) is a redirect
+# alias whose target changes with each micro-release, so a static checksum
+# cannot be pinned here. Override $VCREDIST_URL with a vetted local mirror
+# when supplying your own verified installer; CI pins it via the container.
 download_vcredist() {
     local target="$VCREDIST_DIR/vc_redist.x64.exe"
     if [ -f "$target" ]; then

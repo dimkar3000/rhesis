@@ -9,6 +9,27 @@ RUST_BUILD_TYPE="${RUST_BUILD_TYPE:-release}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-}"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 
+# --- Download integrity (override via environment) ---
+# Expected SHA-256 checksums for downloaded artifacts. Override via
+# environment when a release rotates to a new build. Mismatch aborts
+# the build before anything is extracted or shipped.
+LANGUAGETOOL_SHA256="${LANGUAGETOOL_SHA256:-53600506b399bb5ffe1e4c8dec794fd378212f14aaf38ccef9b6f89314d11631}"
+LID_MODEL_SHA256="${LID_MODEL_SHA256:-8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83}"
+
+# fastText pinned to commit SHA for v0.9.2 (tag can move; the SHA cannot).
+# Resolve with: git ls-remote https://github.com/facebookresearch/fastText.git refs/tags/v0.9.2
+FASTTEXT_COMMIT="${FASTTEXT_COMMIT:-5b5943c118b0ec5fb9cd8d20587de2b2d3966dfe}"
+
+# Verify a downloaded file against its expected SHA-256. Aborts on
+# mismatch so a tampered archive is never extracted or bundled.
+verify_sha256() {
+    local file="$1" expected="$2" label="$3"
+    echo "$expected  $file" | sha256sum -c - >/dev/null || {
+        echo "ERROR: $label ($file) SHA-256 mismatch; refusing to continue" >&2
+        return 1
+    }
+}
+
 # --- Parse arguments ---
 CLEAN_BUILD=false
 
@@ -222,7 +243,7 @@ build_fasttext() {
 
     if [ ! -f "$BUILD_DIR/fasttext-src/Makefile" ]; then
         rm -rf "$BUILD_DIR/fasttext-src"
-        git clone --depth 1 --branch v0.9.2 https://github.com/facebookresearch/fastText.git "$BUILD_DIR/fasttext-src"
+        git clone --depth 1 --branch "$FASTTEXT_COMMIT" "$FASTTEXT_REPO" "$BUILD_DIR/fasttext-src"
     fi
 
     make -C "$BUILD_DIR/fasttext-src" -j$(nproc) CXXFLAGS="-pthread -std=c++17 -march=native -include cstdint"
@@ -305,6 +326,7 @@ setup_languagetool() {
     local lt_archive="$BUILD_DIR/LanguageTool-6.6.zip"
     if [ ! -f "$lt_archive" ]; then
         wget -q -O "$lt_archive" "https://languagetool.org/download/LanguageTool-6.6.zip"
+        verify_sha256 "$lt_archive" "$LANGUAGETOOL_SHA256" "LanguageTool archive"
     fi
 
     unzip -q -o "$lt_archive" -d "$lt_dir"
@@ -333,6 +355,7 @@ setup_lid_model() {
     local lid_model="$BUILD_DIR/lid.176.ftz"
     if [ ! -f "$lid_model" ]; then
         wget -q -O "$lid_model" "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.ftz"
+        verify_sha256 "$lid_model" "$LID_MODEL_SHA256" "lid.176.ftz model"
     fi
     mkdir -p "$BUILD_DIR/artifacts"
     cp "$lid_model" "$lid_artifact"

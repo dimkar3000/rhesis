@@ -248,6 +248,11 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 export QT_PLUGIN_PATH="${HERE}/app/lib/qt6/plugins"
 export QML2_IMPORT_PATH="${HERE}/app/lib/qt6/qml"
 export RHESIS_LANGUAGETOOL_DIR="${HERE}/app/share/rhesis/LanguageTool"
+# Propagate APPIMAGE so the app knows its own AppImage path (for autostart Exec=)
+export APPIMAGE="${APPIMAGE:-$(readlink -f "$0")}"
+# Export RHESIS_LAUNCHER so autostart entries point at the AppImage file
+# (matching what uninstall expects for AppImage flavor)
+export RHESIS_LAUNCHER="${APPIMAGE}"
 exec "${HERE}/app/bin/rhesis" "$@"
 APPRUN
     chmod +x "$APPDIR/AppRun"

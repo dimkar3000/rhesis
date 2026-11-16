@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Rhesis installer / launcher / uninstaller
 #
 # A single script installed as /usr/bin/rhesis (global install) or
@@ -59,24 +59,87 @@ EOF
 
 uninstall() {
     echo "Removing Rhesis files..."
+    # A live instance survives file deletion on Linux and rewrites state
+    # after this uninstall finishes: an open settings page re-commits the
+    # autostart entry on Apply and the daemon re-creates its settings
+    # store. Stop this payload's processes before touching the files.
+    stop_running_instances
     rm -rf "$PREFIX"
     rm -f "$0"
-    if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
-        rm -f "${HOME:-}/.local/share/applications/io.github.dimkar3000.rhesis.desktop"
+    if [ "$SCRIPT_DIR" = "$USER_HOME/.local/bin" ]; then
+        rm -f "$USER_HOME/.local/share/applications/io.github.dimkar3000.rhesis.desktop"
     else
         rm -f /usr/share/applications/io.github.dimkar3000.rhesis.desktop
     fi
+    # Releases before the autostart path fix wrote the entry straight into
+    # the config root, where no session ever reads it; drop the junk.
+    rm -f "${XDG_CONFIG_HOME:-$USER_HOME/.config}/io.github.dimkar3000.rhesis.desktop"
     # The autostart entry is written by the app (Settings toggle), but one
     # left behind by THIS flavor would keep failing at every login (systemd
-    # 203/EXEC once the launcher is gone). Remove it only when its Exec=
-    # points at this launcher: entries of other flavors (flatpak run ...)
-    # survive a native uninstall.
-    autostart="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/io.github.dimkar3000.rhesis.desktop"
-    if [ -f "$autostart" ] && \
-       grep -Fqs "Exec=$SCRIPT_DIR/$(basename "$0") --hidden" "$autostart"; then
-        rm -f "$autostart"
+    # 203/EXEC once the launcher is gone). Remove it when its Exec= points
+    # at this launcher OR at the direct binary of this install: entries of
+    # other flavors (flatpak run ...) survive a native uninstall.
+    autostart="${XDG_CONFIG_HOME:-$USER_HOME/.config}/autostart/io.github.dimkar3000.rhesis.desktop"
+    local launcher_exec="$SCRIPT_DIR/$(basename "$0") --hidden"
+    local binary_exec=""
+    if [ "$SCRIPT_DIR" = "$USER_HOME/.local/bin" ]; then
+        binary_exec="$USER_HOME/.local/share/rhesis/bin/rhesis --hidden"
+    elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
+        binary_exec="/usr/share/rhesis/bin/rhesis --hidden"
+    fi
+    if [ -f "$autostart" ]; then
+        # POSIX && and || share one precedence level and associate left, so
+        # the matcher is grouped explicitly: an entry written for this
+        # launcher dies, or one pointing at this install's direct binary
+        # does. Ungrouped, the launcher match is discarded and the binary
+        # grep alone decides — launcher entries would survive the uninstall.
+        if grep -Fqs "Exec=$launcher_exec" "$autostart" \
+            || { [ -n "$binary_exec" ] && grep -Fqs "Exec=$binary_exec" "$autostart"; }; then
+            rm -f "$autostart"
+        fi
     fi
     echo "Rhesis uninstalled."
+}
+
+stop_running_instances() {
+    # pkill -f matches the client and the daemon alike: the daemon's path
+    # ($PREFIX/bin/rhesis-service) carries the client's as a prefix.
+    pkill -TERM -f "$PREFIX/bin/rhesis" 2>/dev/null || true
+    local waited=0
+    while [ "$waited" -lt 10 ] && pgrep -f "$PREFIX/bin/rhesis" >/dev/null 2>&1; do
+        sleep 0.2
+        waited=$((waited + 1))
+    done
+    if pgrep -f "$PREFIX/bin/rhesis" >/dev/null 2>&1; then
+        pkill -KILL -f "$PREFIX/bin/rhesis" 2>/dev/null || true
+    fi
+    # Older daemons (pre PDEATHSIG) leave the bundled LanguageTool JVM
+    # orphaned when they die. It belongs to this payload only when its
+    # working directory sits inside it (the worker starts java with the
+    # LanguageTool dir as cwd); SIGTERM is the JVM's graceful shutdown.
+    for proc in /proc/[0-9]*; do
+        case "$(readlink "$proc/cwd" 2>/dev/null)" in
+            "$PREFIX"/LanguageTool*) kill -TERM "${proc##*/}" 2>/dev/null || true ;;
+        esac
+    done
+}
+
+# User-level paths (per-user launcher, autostart entry, menu entry) belong
+# to the account that invoked this run, but elevation swaps HOME to root's:
+# an elevated re-exec carries the account explicitly, plain sudo/doas leak
+# it through the environment.
+invoking_home() {
+    local home="${RHESIS_USER_HOME:-}"
+    local user="${RHESIS_USER:-${SUDO_USER:-${DOAS_USER:-}}}"
+    if [ -z "$home" ] && [ -n "$user" ] && [ "$user" != "root" ]; then
+        home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
+        [ -n "$home" ] || home="/home/$user"
+    fi
+    if [ -n "$home" ]; then
+        printf '%s\n' "$home"
+    else
+        printf '%s\n' "${HOME:-}"
+    fi
 }
 
 install_desktop_entry() {
@@ -163,6 +226,54 @@ download_archive() {
     printf '%s\n' "$dest"
 }
 
+# Try to elevate privileges for global install using available GUI tools.
+# Returns 0 if already root or elevation succeeded, 1 otherwise.
+maybe_elevate() {
+    if [ "$(id -u)" -eq 0 ]; then
+        return 0
+    fi
+
+    # Resolve RHESIS_ARCHIVE_SRC to absolute path so it works after pkexec
+    # changes the working directory.
+    local archive_src="${RHESIS_ARCHIVE_SRC:-}"
+    if [ -n "$archive_src" ] && [ "${archive_src#/}" = "$archive_src" ]; then
+        # Relative path — resolve from current directory
+        archive_src="$(cd "$(dirname "$archive_src")" && pwd)/$(basename "$archive_src")"
+    fi
+
+    # pkexec strips the environment; explicitly pass needed vars. The
+    # invoking account rides along so the elevated run resolves user-level
+    # paths (autostart entry) against the right home.
+    local pkexec_env="env RHESIS_ARCHIVE_SRC=${archive_src} RHESIS_REPO=${RHESIS_REPO:-} RHESIS_USER=$(id -un) RHESIS_USER_HOME=${HOME:-}"
+
+    # Use ORIGINAL_ARGS to re-execute the exact original command line
+    local script_path="$(readlink -f "$0")"
+
+    # Try pkexec first (policykit, works on most desktops)
+    if command -v pkexec >/dev/null 2>&1; then
+        pkexec $pkexec_env "$script_path" "${ORIGINAL_ARGS[@]}" && return 0 || return 1
+    fi
+
+    # Try kdialog (KDE)
+    if command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Rhesis" --yesno "Global install or uninstall requires root privileges. Allow?" && \
+        pkexec $pkexec_env "$script_path" "${ORIGINAL_ARGS[@]}" && return 0 || return 1
+    fi
+
+    # Try zenity (GNOME/GTK)
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --question --title="Rhesis" --text="Global install or uninstall requires root privileges. Allow?" && \
+        pkexec $pkexec_env "$script_path" "${ORIGINAL_ARGS[@]}" && return 0 || return 1
+    fi
+
+    # Fallback: plain sudo (works in terminal), preserve env with -E
+    if command -v sudo >/dev/null 2>&1; then
+        sudo -E "$script_path" "${ORIGINAL_ARGS[@]}" && return 0 || return 1
+    fi
+
+    return 1
+}
+
 install() {
     INSTALL_TYPE="${1:-}"
     if [ -z "$INSTALL_TYPE" ]; then
@@ -180,9 +291,9 @@ install() {
     esac
 
     if [ "$INSTALL_TYPE" = "global" ] && [ "$(id -u)" -ne 0 ]; then
-        echo "Error: a global install writes to / and requires root" >&2
-        echo "       rerun with sudo, or choose a local install" >&2
-        exit 1
+        # Not root — try to elevate via GUI or sudo
+        maybe_elevate
+        exit $?
     fi
 
     local target="/"
@@ -222,7 +333,7 @@ launch() {
     elif [ -x "${HOME:-}/.local/share/rhesis/bin/rhesis" ]; then
         # Not installed as `rhesis` (e.g. run from the repo):
         # fall back to an existing per-user install so
-        # ./scripts/runner.sh keeps working during development.
+        # ./scripts/rhesis-installer.sh keeps working during development.
         PREFIX="${HOME}/.local/share/rhesis"
     elif [ -x /usr/share/rhesis/bin/rhesis ]; then
         PREFIX="/usr/share/rhesis"
@@ -245,6 +356,11 @@ launch() {
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
+# Save original arguments for re-execution during elevation
+ORIGINAL_ARGS=("$@")
+
+USER_HOME="$(invoking_home)"
+
 case "${1:-}" in
     --install)
         tmp="$(mktemp -d /tmp/rhesis-install.XXXXXX)"
@@ -256,15 +372,21 @@ case "${1:-}" in
         # uninstaller deletes this script itself ($0), so running it
         # from a random copy (e.g. the repo) would delete the copy
         # instead of the installed rhesis.
-        if [ "$SCRIPT_DIR" = "${HOME:-}/.local/bin" ]; then
-            PREFIX="${HOME}/.local/share/rhesis"
+        if [ "$SCRIPT_DIR" = "$USER_HOME/.local/bin" ]; then
+            PREFIX="$USER_HOME/.local/share/rhesis"
             uninstall
         elif [ "$SCRIPT_DIR" = "/usr/bin" ]; then
             PREFIX="/usr/share/rhesis"
+            # Payload and menu entry need root; without elevation set -e
+            # kills the run mid-rm, before the user-level cleanup.
+            if [ "$(id -u)" -ne 0 ]; then
+                maybe_elevate
+                exit $?
+            fi
             uninstall
         else
             echo "Error: uninstall must be run from the installed rhesis script" >&2
-            echo "       run: ${HOME:-}/.local/bin/rhesis --uninstall (or /usr/bin/rhesis --uninstall)" >&2
+            echo "       run: $USER_HOME/.local/bin/rhesis --uninstall (or /usr/bin/rhesis --uninstall)" >&2
             exit 1
         fi
         ;;

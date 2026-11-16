@@ -3,7 +3,9 @@ cmake_minimum_required(VERSION 3.28)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml" CARGO_TOML REGEX "^version =")
 list(GET CARGO_TOML 0 VERSION_LINE)
 string(REGEX REPLACE "^version = \"(.+)\"" "\\1" RHESIS_VERSION "${VERSION_LINE}")
-project(rhesis VERSION ${RHESIS_VERSION})
+# project() requires strict semver: strip any prerelease/build tag.
+string(REGEX REPLACE "([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" RHESIS_CMAKE_VERSION "${RHESIS_VERSION}")
+project(rhesis VERSION ${RHESIS_CMAKE_VERSION})
 
 # --- Options ---
 set(RHESIS_BINARY_NAME "rhesis" CACHE STRING "Name of the executable")
